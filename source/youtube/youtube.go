@@ -30,6 +30,10 @@ type YouTube struct {
 
 	// UserAgent overrides the default yt-dlp user-agent when set.
 	userAgent string
+
+	// Format controls the yt-dlp format selector (e.g. "best", "bestvideo+bestaudio").
+	// Defaults to "best" when empty.
+	format string
 }
 
 // New is the Factory registered under the name "youtube".
@@ -40,6 +44,11 @@ func New(config map[string]string) (source.Source, error) {
 	}
 	if v, ok := config["user_agent"]; ok {
 		y.userAgent = v
+	}
+	if v, ok := config["format"]; ok && v != "" {
+		y.format = v
+	} else {
+		y.format = "best"
 	}
 	return y, nil
 }
@@ -58,7 +67,7 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		return nil, err
 	}
 
-	args := append(y.baseArgs(), "-f", "best", "-g", url)
+	args := append(y.baseArgs(), "-f", y.format, "-g", url)
 	out, err := exec.CommandContext(ctx, "yt-dlp", args...).Output()
 	if err != nil {
 		return nil, ytExecError("yt-dlp", err)
@@ -79,9 +88,9 @@ func (y *YouTube) ProbeFormat(ctx context.Context, url string) (*source.StreamIn
 		return nil, err
 	}
 
-	// yt-dlp -f best -j <url>  → single-line JSON with full metadata.
+	// yt-dlp -f <format> -j <url>  → single-line JSON with full metadata.
 	args := y.baseArgs()
-	args = append(args, "-f", "best", "-j", url)
+	args = append(args, "-f", y.format, "-j", url)
 
 	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	out, err := cmd.Output()

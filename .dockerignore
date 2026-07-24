@@ -1,0 +1,7 @@
+.git
+.claude
+*.md
+config.yaml.example
+docker-compose.yml
+.env*
+restream

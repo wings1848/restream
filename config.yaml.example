@@ -20,6 +20,9 @@ pipelines:
         url: "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
         # Path to Netscape-format cookies file (optional, for members-only streams)
         cookies_file: ""
+        # yt-dlp format selector (optional, defaults to "best")
+        # Examples: "bestvideo+bestaudio", "best[height<=1080]", "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+        format: ""
 
     # --- Sink (destination) settings ---
     sink:
@@ -48,6 +51,9 @@ pipelines:
       audio_encoder: aac
       # Audio bitrate: 64k | 128k | 192k | 256k | 320k
       audio_bitrate: 128k
+      # Resolution scaling (optional, used when transcoding). Empty = no scaling.
+      # Examples: "-1:720" for 720p with proportional width, "1280:720" for exact
+      # scale: ""
 
     # --- Auto-reconnect / retry settings ---
     retry:

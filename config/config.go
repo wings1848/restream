@@ -52,6 +52,7 @@ type FFmpegConfig struct {
 	CRF          int    `yaml:"crf"`           // 18-28
 	AudioEncoder string `yaml:"audio_encoder"` // aac, libmp3lame, ...
 	AudioBitrate string `yaml:"audio_bitrate"` // 128k, 192k, ...
+	Scale        string `yaml:"scale"`         // resolution scaling (e.g. "-1:720"), empty = no scale
 }
 
 // RetryConfig controls exponential-backoff reconnection.

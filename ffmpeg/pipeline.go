@@ -91,6 +91,9 @@ func (p *Pipeline) BuildCommand(ctx context.Context) (*exec.Cmd, error) {
 		if p.ffCfg.CRF > 0 {
 			args = append(args, "-crf", fmt.Sprintf("%d", p.ffCfg.CRF))
 		}
+		if p.ffCfg.Scale != "" {
+			args = append(args, "-vf", fmt.Sprintf("scale=%s", p.ffCfg.Scale))
+		}
 		args = append(args, "-c:a", p.ffCfg.AudioEncoder)
 		if p.ffCfg.AudioBitrate != "" {
 			args = append(args, "-b:a", p.ffCfg.AudioBitrate)
