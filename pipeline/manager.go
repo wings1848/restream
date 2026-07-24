@@ -6,10 +6,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"syscall"
 	"time"
 
 	"restream/config"
 	"restream/ffmpeg"
+	"restream/health"
 	"restream/sink"
 	"restream/source"
 )
@@ -105,14 +107,20 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-// runOnce resolves the source stream, builds the FFmpeg pipeline, and runs it.
-// Returns nil on clean exit, or an error if any step fails.
+// runOnce resolves the source stream, builds the FFmpeg pipeline, runs it
+// with health monitoring, and returns nil on clean exit or an error.
 func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
-	// Resolve source stream.
+	// Resolve source stream URL.
 	l.Debug("resolving source stream", "url", m.cfg.Source.Config["url"])
 	streamInfo, err := m.source.GetStream(ctx, m.cfg.Source.Config["url"])
 	if err != nil {
 		return fmt.Errorf("resolve source: %w", err)
+	}
+
+	// Probe codec format for auto transcode decision.
+	if probeInfo, probeErr := m.source.ProbeFormat(ctx, m.cfg.Source.Config["url"]); probeErr == nil {
+		streamInfo.VideoCodec = probeInfo.VideoCodec
+		streamInfo.AudioCodec = probeInfo.AudioCodec
 	}
 
 	// Get sink target.
@@ -122,20 +130,20 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 	}
 
 	// Build the FFmpeg command.
-	pipe := ffmpeg.NewPipeline(
-		streamInfo,
-		target,
-		ffmpeg.TranscodeMode(m.cfg.FFmpeg.Transcode),
-		m.cfg.FFmpeg.VideoEncoder,
-		m.cfg.FFmpeg.Preset,
-		m.cfg.FFmpeg.CRF,
-		m.cfg.FFmpeg.AudioEncoder,
-		m.cfg.FFmpeg.AudioBitrate,
-	)
-
+	pipe := ffmpeg.NewPipeline(ffmpeg.PipelineConfig{
+		StreamInfo: streamInfo,
+		Target:     target,
+		Ffmpeg:     m.cfg.FFmpeg,
+	})
 	cmd, err := pipe.BuildCommand(ctx)
 	if err != nil {
 		return fmt.Errorf("build ffmpeg command: %w", err)
+	}
+
+	// Pipe stderr for health monitoring.
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
 	l.Info("starting ffmpeg pipeline",
@@ -144,9 +152,41 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		"audio", m.cfg.FFmpeg.AudioEncoder,
 	)
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ffmpeg exited: %w", err)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("ffmpeg start: %w", err)
 	}
+	l.Info("ffmpeg started", "pid", cmd.Process.Pid)
 
-	return nil
+	// Start health monitoring.
+	healthTimeout := time.Duration(m.cfg.Retry.InitialInterval) * time.Second * 3
+	checker := health.NewChecker(healthTimeout)
+	healthCh := checker.Start(ctx, stderrPipe)
+
+	// Wait for FFmpeg completion.
+	doneCh := make(chan error, 1)
+	go func() { doneCh <- cmd.Wait() }()
+
+	select {
+	case <-ctx.Done():
+		l.Info("graceful shutdown, sending SIGTERM to ffmpeg")
+		cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-doneCh:
+		case <-time.After(5 * time.Second):
+			cmd.Process.Kill()
+			<-doneCh
+		}
+		return ctx.Err()
+	case status := <-healthCh:
+		l.Warn("health check failed, killing ffmpeg", "status", status)
+		cmd.Process.Kill()
+		<-doneCh
+		return fmt.Errorf("health check: status=%v", status)
+	case err := <-doneCh:
+		if err != nil {
+			return fmt.Errorf("ffmpeg exited: %w", err)
+		}
+		l.Info("ffmpeg exited cleanly")
+		return nil
+	}
 }

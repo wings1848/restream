@@ -90,7 +90,7 @@ func (c *Checker) Start(ctx context.Context, stderr io.Reader) <-chan Status {
 func (c *Checker) monitor(ctx context.Context, stderr io.Reader, statusCh chan<- Status) {
 	defer close(statusCh)
 
-	lineCh := make(chan string)
+	lineCh := make(chan string, 1)
 
 	// Goroutine to drain stderr line by line via bufio.Scanner.
 	go func() {

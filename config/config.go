@@ -7,8 +7,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"regexp"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -74,19 +72,14 @@ func DefaultConfig() Config {
 	}
 }
 
-// envVarRe matches ${VAR_NAME} patterns.
-var envVarRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-
-// expandEnv replaces ${VAR} placeholders in s with environment variable
-// values. Unknown variables are left as-is.
+// expandEnv replaces ${VAR} placeholders with their environment values.
+// Unknown variables are preserved as-is (${VAR}).
 func expandEnv(s string) string {
-	return envVarRe.ReplaceAllStringFunc(s, func(match string) string {
-		// strip ${ and }
-		name := match[2 : len(match)-1]
+	return os.Expand(s, func(name string) string {
 		if val, ok := os.LookupEnv(name); ok {
 			return val
 		}
-		return match
+		return "${" + name + "}"
 	})
 }
 
@@ -115,44 +108,45 @@ func Parse(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	// Expand environment variables in all pipeline configs.
+	// Expand env vars and apply per-pipeline defaults.
 	for i := range cfg.Pipelines {
 		expandConfig(cfg.Pipelines[i].Source.Config)
 		expandConfig(cfg.Pipelines[i].Sink.Config)
-	}
-
-	// Apply per-pipeline defaults.
-	for i := range cfg.Pipelines {
-		if cfg.Pipelines[i].FFmpeg.Transcode == "" {
-			cfg.Pipelines[i].FFmpeg.Transcode = "auto"
-		}
-		if cfg.Pipelines[i].FFmpeg.VideoEncoder == "" {
-			cfg.Pipelines[i].FFmpeg.VideoEncoder = "libx264"
-		}
-		if cfg.Pipelines[i].FFmpeg.Preset == "" {
-			cfg.Pipelines[i].FFmpeg.Preset = "veryfast"
-		}
-		if cfg.Pipelines[i].FFmpeg.CRF == 0 {
-			cfg.Pipelines[i].FFmpeg.CRF = 23
-		}
-		if cfg.Pipelines[i].FFmpeg.AudioEncoder == "" {
-			cfg.Pipelines[i].FFmpeg.AudioEncoder = "aac"
-		}
-		if cfg.Pipelines[i].FFmpeg.AudioBitrate == "" {
-			cfg.Pipelines[i].FFmpeg.AudioBitrate = "128k"
-		}
-		if cfg.Pipelines[i].Retry.InitialInterval == 0 {
-			cfg.Pipelines[i].Retry.InitialInterval = 5
-		}
-		if cfg.Pipelines[i].Retry.MaxInterval == 0 {
-			cfg.Pipelines[i].Retry.MaxInterval = 60
-		}
-		if cfg.Pipelines[i].Retry.BackoffMultiplier == 0 {
-			cfg.Pipelines[i].Retry.BackoffMultiplier = 2.0
-		}
+		cfg.Pipelines[i].applyDefaults()
 	}
 
 	return &cfg, nil
+}
+
+// applyDefaults fills in zero-value fields with sensible values.
+func (p *Pipeline) applyDefaults() {
+	if p.FFmpeg.Transcode == "" {
+		p.FFmpeg.Transcode = "auto"
+	}
+	if p.FFmpeg.VideoEncoder == "" {
+		p.FFmpeg.VideoEncoder = "libx264"
+	}
+	if p.FFmpeg.Preset == "" {
+		p.FFmpeg.Preset = "veryfast"
+	}
+	if p.FFmpeg.CRF == 0 {
+		p.FFmpeg.CRF = 23
+	}
+	if p.FFmpeg.AudioEncoder == "" {
+		p.FFmpeg.AudioEncoder = "aac"
+	}
+	if p.FFmpeg.AudioBitrate == "" {
+		p.FFmpeg.AudioBitrate = "128k"
+	}
+	if p.Retry.InitialInterval == 0 {
+		p.Retry.InitialInterval = 5
+	}
+	if p.Retry.MaxInterval == 0 {
+		p.Retry.MaxInterval = 60
+	}
+	if p.Retry.BackoffMultiplier == 0 {
+		p.Retry.BackoffMultiplier = 2.0
+	}
 }
 
 // Override applies CLI flag overrides to the config.
@@ -230,39 +224,22 @@ func LoadWithFlags(flags *CLIFlags) (*Config, error) {
 			return nil, err
 		}
 	} else if flags.URL != "" && flags.StreamKey != "" {
-		// Synthesize a minimal config from CLI flags.
+		// Synthesize a minimal config from CLI flags with defaults.
+		p := Pipeline{
+			Name: "cli-pipeline",
+			Source: SourceConfig{
+				Type:   "youtube",
+				Config: map[string]string{"url": flags.URL},
+			},
+			Sink: SinkConfig{
+				Type:   "bilibili",
+				Config: map[string]string{"stream_key": flags.StreamKey},
+			},
+		}
+		p.applyDefaults()
 		cfg = &Config{
-			Global: GlobalConfig{
-				LogLevel:            "info",
-				HealthCheckInterval: 10,
-			},
-			Pipelines: []Pipeline{
-				{
-					Name: "cli-pipeline",
-					Source: SourceConfig{
-						Type:   "youtube",
-						Config: map[string]string{"url": flags.URL},
-					},
-					Sink: SinkConfig{
-						Type:   "bilibili",
-						Config: map[string]string{"stream_key": flags.StreamKey},
-					},
-					FFmpeg: FFmpegConfig{
-						Transcode:    "auto",
-						VideoEncoder: "libx264",
-						Preset:       "veryfast",
-						CRF:          23,
-						AudioEncoder: "aac",
-						AudioBitrate: "128k",
-					},
-					Retry: RetryConfig{
-						MaxRetries:        0,
-						InitialInterval:   5,
-						MaxInterval:       60,
-						BackoffMultiplier: 2.0,
-					},
-				},
-			},
+			Global:    DefaultConfig().Global,
+			Pipelines: []Pipeline{p},
 		}
 	} else {
 		return nil, fmt.Errorf(
@@ -283,6 +260,4 @@ func LoadWithFlags(flags *CLIFlags) (*Config, error) {
 	return cfg, nil
 }
 
-// init ensures we don't require a real config parse when DefaultConfig
-// is called — goyaml is only imported once a config path is given.
-var _ = strings.TrimSpace
+

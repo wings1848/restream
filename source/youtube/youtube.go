@@ -6,6 +6,7 @@ package youtube
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -13,6 +14,9 @@ import (
 
 	"restream/source"
 )
+
+// youtubeURLRe matches valid YouTube live-stream URLs.
+var youtubeURLRe = regexp.MustCompile(`^https?://(www\.)?(youtube\.com/(watch\?v=|live/)|youtu\.be/)`)
 
 func init() {
 	source.Register("youtube", New)
@@ -43,12 +47,7 @@ func New(config map[string]string) (source.Source, error) {
 func (y *YouTube) Name() string { return "youtube" }
 
 func (y *YouTube) ValidateURL(url string) error {
-	// Accept youtube.com / youtu.be live URLs.
-	matched, _ := regexp.MatchString(
-		`^https?://(www\.)?(youtube\.com/(watch\?v=|live/)|youtu\.be/)`,
-		url,
-	)
-	if !matched {
+	if !youtubeURLRe.MatchString(url) {
 		return fmt.Errorf("not a valid YouTube URL: %s", url)
 	}
 	return nil
@@ -59,18 +58,10 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		return nil, err
 	}
 
-	// yt-dlp --flat-playlist -f best -g <url>
-	// -g prints the direct stream URL(s).
-	args := y.baseArgs()
-	args = append(args, "-f", "best", "-g", url)
-
-	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
-	out, err := cmd.Output()
+	args := append(y.baseArgs(), "-f", "best", "-g", url)
+	out, err := exec.CommandContext(ctx, "yt-dlp", args...).Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("yt-dlp failed: %s", string(exitErr.Stderr))
-		}
-		return nil, fmt.Errorf("running yt-dlp: %w", err)
+		return nil, ytExecError("yt-dlp", err)
 	}
 
 	raw := strings.TrimSpace(string(out))
@@ -95,10 +86,7 @@ func (y *YouTube) ProbeFormat(ctx context.Context, url string) (*source.StreamIn
 	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	out, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("yt-dlp probe failed: %s", string(exitErr.Stderr))
-		}
-		return nil, fmt.Errorf("running yt-dlp probe: %w", err)
+		return nil, ytExecError("yt-dlp probe", err)
 	}
 
 	var raw struct {
@@ -133,6 +121,15 @@ func (y *YouTube) baseArgs() []string {
 		args = append(args, "--user-agent", y.userAgent)
 	}
 	return args
+}
+
+// ytExecError extracts stderr from exec.ExitError for better error messages.
+func ytExecError(context string, err error) error {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return fmt.Errorf("%s: %s", context, string(exitErr.Stderr))
+	}
+	return fmt.Errorf("%s: %w", context, err)
 }
 
 // normalizeCodec strips "avc1." / "mp4a." / "vp09." prefixes that

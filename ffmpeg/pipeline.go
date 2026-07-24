@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 
+	"restream/config"
 	"restream/sink"
 	"restream/source"
 )
@@ -22,34 +23,25 @@ const (
 // Pipeline represents an FFmpeg transcoding pipeline from a source stream
 // to an RTMP sink target.
 type Pipeline struct {
-	streamInfo   *source.StreamInfo
-	target       *sink.RTMPTarget
-	mode         TranscodeMode
-	videoEncoder string
-	preset       string
-	crf          int
-	audioEncoder string
-	audioBitrate string
+	streamInfo *source.StreamInfo
+	target     *sink.RTMPTarget
+	ffCfg      config.FFmpegConfig
+}
+
+// PipelineConfig groups parameters for NewPipeline.
+type PipelineConfig struct {
+	StreamInfo *source.StreamInfo
+	Target     *sink.RTMPTarget
+	Transcode  TranscodeMode
+	Ffmpeg     config.FFmpegConfig
 }
 
 // NewPipeline creates a new Pipeline with the given configuration.
-func NewPipeline(
-	streamInfo *source.StreamInfo,
-	target *sink.RTMPTarget,
-	mode TranscodeMode,
-	videoEncoder, preset string,
-	crf int,
-	audioEncoder, audioBitrate string,
-) *Pipeline {
+func NewPipeline(cfg PipelineConfig) *Pipeline {
 	return &Pipeline{
-		streamInfo:   streamInfo,
-		target:       target,
-		mode:         mode,
-		videoEncoder: videoEncoder,
-		preset:       preset,
-		crf:          crf,
-		audioEncoder: audioEncoder,
-		audioBitrate: audioBitrate,
+		streamInfo: cfg.StreamInfo,
+		target:     cfg.Target,
+		ffCfg:      cfg.Ffmpeg,
 	}
 }
 
@@ -81,28 +73,27 @@ func (p *Pipeline) BuildCommand(ctx context.Context) (*exec.Cmd, error) {
 		args = append(args, "-i", u)
 	}
 
-	needsTranscode := p.mode == TranscodeForce
-	if p.mode == TranscodeAuto {
+	mode := p.ffCfg.Transcode
+	needsTranscode := mode == "force"
+	if mode == "auto" {
 		needsTranscode = NeedsTranscode(p.streamInfo)
 	}
 
-	// When using two inputs, explicitly map video from first and audio
-	// from second so FFmpeg picks the correct streams.
 	if multiInput {
 		args = append(args, "-map", "0:v", "-map", "1:a")
 	}
 
 	if needsTranscode {
-		args = append(args, "-c:v", p.videoEncoder)
-		if p.preset != "" {
-			args = append(args, "-preset", p.preset)
+		args = append(args, "-c:v", p.ffCfg.VideoEncoder)
+		if p.ffCfg.Preset != "" {
+			args = append(args, "-preset", p.ffCfg.Preset)
 		}
-		if p.crf > 0 {
-			args = append(args, "-crf", fmt.Sprintf("%d", p.crf))
+		if p.ffCfg.CRF > 0 {
+			args = append(args, "-crf", fmt.Sprintf("%d", p.ffCfg.CRF))
 		}
-		args = append(args, "-c:a", p.audioEncoder)
-		if p.audioBitrate != "" {
-			args = append(args, "-b:a", p.audioBitrate)
+		args = append(args, "-c:a", p.ffCfg.AudioEncoder)
+		if p.ffCfg.AudioBitrate != "" {
+			args = append(args, "-b:a", p.ffCfg.AudioBitrate)
 		}
 	} else {
 		args = append(args, "-c", "copy")
@@ -114,16 +105,27 @@ func (p *Pipeline) BuildCommand(ctx context.Context) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// NeedsTranscode returns true if the stream codec information indicates
-// that transcoding is required (video is not h264 or audio is not aac).
-// When codec information is empty it returns false, allowing copy mode
-// as the default since we do not know better.
+// passThroughCodecs lists codecs that can be stream-copied directly to FLV
+// without re-encoding. FLV container supports H.264 video and AAC audio.
+var passThroughCodecs = map[string]struct{}{
+	"h264": {},
+	"avc":  {}, // shorthand for H.264 AVC
+	"aac":  {},
+}
+
+// NeedsTranscode returns true when source codecs are known and incompatible
+// with FLV passthrough. Unknown codecs (empty field) default to copy as a
+// safe fallback.
 func NeedsTranscode(info *source.StreamInfo) bool {
-	if info.VideoCodec != "" && info.VideoCodec != "h264" {
-		return true
+	if info.VideoCodec != "" {
+		if _, ok := passThroughCodecs[info.VideoCodec]; !ok {
+			return true
+		}
 	}
-	if info.AudioCodec != "" && info.AudioCodec != "aac" {
-		return true
+	if info.AudioCodec != "" {
+		if _, ok := passThroughCodecs[info.AudioCodec]; !ok {
+			return true
+		}
 	}
 	return false
 }
