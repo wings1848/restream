@@ -1,0 +1,73 @@
+# restream Configuration Example
+# ===============================
+# Copy this file to config.yaml and adjust the values.
+# Environment variables in ${VAR} form are expanded at load time.
+
+global:
+  # Log level: debug | info | warn | error
+  log_level: info
+  # How often (in seconds) to check stream health
+  health_check_interval: 10
+
+pipelines:
+  - name: "youtube-to-bilibili"
+    # --- Source settings ---
+    source:
+      # Source type identifier (registered source package)
+      type: youtube
+      config:
+        # YouTube live stream URL (required)
+        url: "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
+        # Path to Netscape-format cookies file (optional, for members-only streams)
+        cookies_file: ""
+
+    # --- Sink (destination) settings ---
+    sink:
+      # Sink type identifier (registered sink package)
+      type: bilibili
+      config:
+        # RTMP ingest URL (optional; uses Bilibili default if empty)
+        rtmp_url: "rtmp://live-push.bilivideo.com/live-bvc/"
+        # Stream key / code (required). Supports env var expansion.
+        stream_key: "${BILIBILI_STREAM_KEY}"
+
+    # --- FFmpeg transcode settings ---
+    ffmpeg:
+      # Transcode mode: auto | copy | force
+      #   auto  - transcode when source codec differs from target requirement
+      #   copy  - stream copy (no transcoding, lowest CPU)
+      #   force - always transcode regardless of codec compatibility
+      transcode: auto
+      # Video encoder (used when transcode != copy)
+      video_encoder: libx264
+      # x264 preset: ultrafast | superfast | veryfast | faster | fast | medium | slow | slower | veryslow
+      preset: veryfast
+      # Constant Rate Factor: 0-51 (lower = better quality, larger file)
+      crf: 23
+      # Audio encoder: aac | libmp3lame | libopus | copy
+      audio_encoder: aac
+      # Audio bitrate: 64k | 128k | 192k | 256k | 320k
+      audio_bitrate: 128k
+
+    # --- Auto-reconnect / retry settings ---
+    retry:
+      # Maximum retry attempts (0 = unlimited retries)
+      max_retries: 0
+      # Initial backoff interval in seconds
+      initial_interval: 5
+      # Maximum backoff interval in seconds
+      max_interval: 60
+      # Exponential backoff multiplier per retry
+      backoff_multiplier: 2.0
+
+  # You can define additional pipelines here by adding more items.
+  # Each pipeline runs concurrently.
+  # - name: "another-pipeline"
+  #   source:
+  #     type: youtube
+  #     config:
+  #       url: "https://www.youtube.com/watch?v=ANOTHER_ID"
+  #   sink:
+  #     type: bilibili
+  #     config:
+  #       stream_key: "${BILIBILI_STREAM_KEY_2}"

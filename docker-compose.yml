@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  restream:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # Bilibili stream key — passed through from host environment
+      # or set directly here.
+      - BILIBILI_STREAM_KEY=${BILIBILI_STREAM_KEY}
+    volumes:
+      # Mount the YAML configuration file (read-only).
+      - ./config.yaml:/etc/restream/config.yaml:ro
+      # Optional: mount a cookies.txt for authenticated YouTube access.
+      # Uncomment the next line if you use cookies.
+      # - ./cookies.txt:/cookies.txt:ro
+    command:
+      - "--config"
+      - "/etc/restream/config.yaml"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
