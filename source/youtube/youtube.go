@@ -85,13 +85,14 @@ func New(config map[string]string) (source.Source, error) {
 func (y *YouTube) Name() string { return "youtube" }
 
 // BuildStreamCmd builds a yt-dlp command that downloads the stream to stdout.
+// Uses --downloader ffmpeg so live HLS streams are correctly piped.
 // All auth (cookies, proxy, poToken) is handled by yt-dlp.
 func (y *YouTube) BuildStreamCmd(ctx context.Context, url, format string) *exec.Cmd {
 	if format == "" {
 		format = y.format
 	}
 	extra, _ := y.buildAuthArgs()
-	args := append(y.buildArgs(), "-f", format, "-o", "-", url)
+	args := append(y.buildArgs(), "--downloader", "ffmpeg", "-f", format, "-o", "-", url)
 	args = append(args, extra...)
 	return exec.CommandContext(ctx, "yt-dlp", args...)
 }
