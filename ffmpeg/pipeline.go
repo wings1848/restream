@@ -30,10 +30,11 @@ type Pipeline struct {
 
 // PipelineConfig groups parameters for NewPipeline.
 type PipelineConfig struct {
-	StreamInfo *source.StreamInfo
-	Target     *sink.RTMPTarget
-	Transcode  TranscodeMode
-	Ffmpeg     config.FFmpegConfig
+	StreamInfo   *source.StreamInfo
+	Target       *sink.RTMPTarget
+	Transcode    TranscodeMode
+	Ffmpeg       config.FFmpegConfig
+	SourceCmd    *exec.Cmd // optional: yt-dlp command piping stream to ffmpeg stdin
 }
 
 // NewPipeline creates a new Pipeline with the given configuration.
@@ -45,42 +46,54 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 	}
 }
 
-// BuildCommand constructs the FFmpeg exec.Cmd for this pipeline.
-// The caller can use cmd.StderrPipe() to obtain an io.Reader for the
-// health checker.
-//
-// TranscodeCopy builds: ffmpeg -re -i <url> -c copy -f flv <rtmp_full_url>
-// TranscodeForce builds: ffmpeg -re -i <url> -c:v <encoder> -preset <preset>
-//
-//	-crf <crf> -c:a <audio_encoder> -b:a <audio_bitrate> -f flv <rtmp_full_url>
-//
-// TranscodeAuto uses TranscodeCopy if the source codecs are h264+aac,
-// otherwise falls back to TranscodeForce arguments.
-func (p *Pipeline) BuildCommand(ctx context.Context) (*exec.Cmd, error) {
-	if len(p.streamInfo.URLs) == 0 {
-		return nil, fmt.Errorf("no stream URLs provided")
+// BuildPipeCommand builds a yt-dlp → ffmpeg pipeline. yt-dlp handles
+// all authentication and outputs the stream to stdout; ffmpeg reads
+// from stdin and pushes to the RTMP target. The caller must Start the
+// returned ffmpeg command (yt-dlp is already started).
+func (p *Pipeline) BuildPipeCommand(ctx context.Context, ytdlpCmd *exec.Cmd) (*exec.Cmd, error) {
+	ffCmd := p.buildFfmpegCmd(ctx, true)
+	var err error
+	ffCmd.Stdin, err = ytdlpCmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("yt-dlp stdout pipe: %w", err)
 	}
+	if err := ytdlpCmd.Start(); err != nil {
+		return nil, fmt.Errorf("yt-dlp start: %w", err)
+	}
+	return ffCmd, nil
+}
 
+// BuildCommand constructs a standalone FFmpeg command that reads stream URLs
+// directly. For YouTube, prefer BuildPipeCommand instead — it routes via
+// yt-dlp which handles authentication.
+func (p *Pipeline) BuildCommand(ctx context.Context) (*exec.Cmd, error) {
+	return p.buildFfmpegCmd(ctx, false), nil
+}
+
+// buildFfmpegCmd constructs the ffmpeg command. When pipeMode is true,
+// ffmpeg reads from stdin (pipe:0) instead of URLs.
+func (p *Pipeline) buildFfmpegCmd(ctx context.Context, pipeMode bool) *exec.Cmd {
 	args := []string{"-re", "-y"}
 
-	// Add input URLs. When multiple URLs are provided the first is treated
-	// as the video input and the second as the audio input.
-	multiInput := len(p.streamInfo.URLs) >= 2
-	for i, u := range p.streamInfo.URLs {
-		if i >= 2 {
-			break
+	if pipeMode {
+		args = append(args, "-i", "pipe:0")
+	} else {
+		multiInput := len(p.streamInfo.URLs) >= 2
+		for i, u := range p.streamInfo.URLs {
+			if i >= 2 {
+				break
+			}
+			args = append(args, "-i", u)
 		}
-		args = append(args, "-i", u)
+		if multiInput {
+			args = append(args, "-map", "0:v", "-map", "1:a")
+		}
 	}
 
 	mode := p.ffCfg.Transcode
 	needsTranscode := mode == "force"
 	if mode == "auto" {
 		needsTranscode = NeedsTranscode(p.streamInfo)
-	}
-
-	if multiInput {
-		args = append(args, "-map", "0:v", "-map", "1:a")
 	}
 
 	if needsTranscode {
@@ -103,9 +116,7 @@ func (p *Pipeline) BuildCommand(ctx context.Context) (*exec.Cmd, error) {
 	}
 
 	args = append(args, "-f", "flv", p.target.FullURL())
-
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-	return cmd, nil
+	return exec.CommandContext(ctx, "ffmpeg", args...)
 }
 
 // passThroughCodecs lists codecs that can be stream-copied directly to FLV

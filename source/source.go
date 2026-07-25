@@ -3,7 +3,10 @@
 // and registers itself via the registry to be discoverable by name.
 package source
 
-import "context"
+import (
+	"context"
+	"os/exec"
+)
 
 // StreamInfo holds metadata and access URLs for a detected live stream.
 type StreamInfo struct {
@@ -38,6 +41,11 @@ type Source interface {
 	// ProbeFormat probes the stream to determine its codec and container
 	// format. Returns nil if probing is not supported for this source.
 	ProbeFormat(ctx context.Context, url string) (*StreamInfo, error)
+
+	// BuildStreamCmd builds a command that downloads the live stream to
+	// stdout. This handles all authentication (cookies, proxy, tokens)
+	// so FFmpeg can read from stdin without worrying about auth.
+	BuildStreamCmd(ctx context.Context, url, format string) *exec.Cmd
 }
 
 // Factory is a constructor that takes a flat string→string config map and

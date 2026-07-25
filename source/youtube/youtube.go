@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -76,6 +77,18 @@ func New(config map[string]string) (source.Source, error) {
 
 func (y *YouTube) Name() string { return "youtube" }
 
+// BuildStreamCmd builds a yt-dlp command that downloads the stream to stdout.
+// All auth (cookies, proxy, poToken) is handled by yt-dlp.
+func (y *YouTube) BuildStreamCmd(ctx context.Context, url, format string) *exec.Cmd {
+	if format == "" {
+		format = y.format
+	}
+	extra, _ := y.buildAuthArgs()
+	args := append(y.buildArgs(), "-f", format, "-o", "-", url)
+	args = append(args, extra...)
+	return exec.CommandContext(ctx, "yt-dlp", args...)
+}
+
 func (y *YouTube) ValidateURL(url string) error {
 	if !youtubeURLRe.MatchString(url) {
 		return fmt.Errorf("not a valid YouTube URL: %s", url)
@@ -88,7 +101,11 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		return nil, err
 	}
 
-	args := append(y.baseArgs(), "-f", y.format, "-g", url)
+	extra, cleanup := y.buildAuthArgs()
+	defer cleanup()
+
+	args := append(y.buildArgs(), "-f", y.format, "-g", url)
+	args = append(args, extra...)
 	out, err := exec.CommandContext(ctx, "yt-dlp", args...).Output()
 	if err != nil {
 		return nil, ytExecError("yt-dlp", err)
@@ -109,10 +126,11 @@ func (y *YouTube) ProbeFormat(ctx context.Context, url string) (*source.StreamIn
 		return nil, err
 	}
 
-	// yt-dlp -f <format> -j <url>  → single-line JSON with full metadata.
-	args := y.baseArgs()
-	args = append(args, "-f", y.format, "-j", url)
+	extra, cleanup := y.buildAuthArgs()
+	defer cleanup()
 
+	args := append(y.buildArgs(), "-f", y.format, "-j", url)
+	args = append(args, extra...)
 	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	out, err := cmd.Output()
 	if err != nil {
@@ -142,18 +160,35 @@ func (y *YouTube) ProbeFormat(ctx context.Context, url string) (*source.StreamIn
 	}, nil
 }
 
-func (y *YouTube) baseArgs() []string {
-	args := []string{"--flat-playlist", "--no-warnings"}
+// buildArgs returns the base yt-dlp args without auth.
+func (y *YouTube) buildArgs() []string {
+	return []string{"--flat-playlist", "--no-warnings"}
+}
+
+// buildAuthArgs returns extra yt-dlp arguments for authentication
+// (cookies, proxy, poToken) and a cleanup function for temp files.
+func (y *YouTube) buildAuthArgs() ([]string, func()) {
+	var extraArgs []string
+	var cleanup func() = func() {}
+
 	if y.cookiesFile != "" {
-		args = append(args, "--cookies", y.cookiesFile)
+		src, err := os.ReadFile(y.cookiesFile)
+		if err == nil {
+			f, err := os.CreateTemp("", "yt-dlp-*.txt")
+			if err == nil {
+				f.Write(src)
+				f.Close()
+				extraArgs = append(extraArgs, "--cookies", f.Name())
+				cleanup = func() { os.Remove(f.Name()) }
+			}
+		}
 	}
 	if y.userAgent != "" {
-		args = append(args, "--user-agent", y.userAgent)
+		extraArgs = append(extraArgs, "--user-agent", y.userAgent)
 	}
 	if y.proxy != "" {
-		args = append(args, "--proxy", y.proxy)
+		extraArgs = append(extraArgs, "--proxy", y.proxy)
 	}
-	// poToken + visitorData provide durable authentication without cookies.
 	if y.poToken != "" || y.visitorData != "" {
 		parts := []string{"youtube:"}
 		if y.poToken != "" {
@@ -162,9 +197,9 @@ func (y *YouTube) baseArgs() []string {
 		if y.visitorData != "" {
 			parts = append(parts, "visitor_data="+y.visitorData)
 		}
-		args = append(args, "--extractor-args", strings.Join(parts, ";"))
+		extraArgs = append(extraArgs, "--extractor-args", strings.Join(parts, ";"))
 	}
-	return args
+	return extraArgs, cleanup
 }
 
 // ytExecError extracts stderr from exec.ExitError for better error messages.

@@ -107,10 +107,10 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-// runOnce resolves the source stream, builds the FFmpeg pipeline, runs it
-// with health monitoring, and returns nil on clean exit or an error.
+// runOnce resolves the source stream, builds a yt-dlp → ffmpeg pipeline,
+// runs it with health monitoring, and returns nil on clean exit or an error.
 func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
-	// Resolve source stream URL.
+	// Resolve stream URLs for codec probing.
 	l.Debug("resolving source stream", "url", m.cfg.Source.Config["url"])
 	streamInfo, err := m.source.GetStream(ctx, m.cfg.Source.Config["url"])
 	if err != nil {
@@ -129,33 +129,41 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		return fmt.Errorf("get sink target: %w", err)
 	}
 
-	// Build the FFmpeg command.
-	pipe := ffmpeg.NewPipeline(ffmpeg.PipelineConfig{
+	// Build yt-dlp pipe command: downloads the stream to stdout with all
+	// auth (cookies, proxy, poToken) handled by yt-dlp.
+	ytdlpCmd := m.source.BuildStreamCmd(ctx,
+		m.cfg.Source.Config["url"],
+		m.cfg.Source.Config["format"],
+	)
+
+	// Build the FFmpeg command reading from yt-dlp's stdout pipe.
+	ffPipe := ffmpeg.NewPipeline(ffmpeg.PipelineConfig{
 		StreamInfo: streamInfo,
 		Target:     target,
 		Ffmpeg:     m.cfg.FFmpeg,
 	})
-	cmd, err := pipe.BuildCommand(ctx)
+	ffCmd, err := ffPipe.BuildPipeCommand(ctx, ytdlpCmd)
 	if err != nil {
-		return fmt.Errorf("build ffmpeg command: %w", err)
+		return fmt.Errorf("build ffmpeg pipeline: %w", err)
 	}
 
 	// Pipe stderr for health monitoring.
-	stderrPipe, err := cmd.StderrPipe()
+	stderrPipe, err := ffCmd.StderrPipe()
 	if err != nil {
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
-	l.Info("starting ffmpeg pipeline",
+	l.Info("starting yt-dlp | ffmpeg pipeline",
 		"transcode", m.cfg.FFmpeg.Transcode,
 		"video", m.cfg.FFmpeg.VideoEncoder,
 		"audio", m.cfg.FFmpeg.AudioEncoder,
 	)
 
-	if err := cmd.Start(); err != nil {
+	// Start yt-dlp first (BuildPipeCmd already starts it).
+	if err := ffCmd.Start(); err != nil {
 		return fmt.Errorf("ffmpeg start: %w", err)
 	}
-	l.Info("ffmpeg started", "pid", cmd.Process.Pid)
+	l.Info("pipeline started", "ffmpeg_pid", ffCmd.Process.Pid)
 
 	// Start health monitoring.
 	healthTimeout := time.Duration(m.cfg.Retry.InitialInterval) * time.Second * 3
@@ -164,22 +172,25 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 
 	// Wait for FFmpeg completion.
 	doneCh := make(chan error, 1)
-	go func() { doneCh <- cmd.Wait() }()
+	go func() { doneCh <- ffCmd.Wait() }()
 
 	select {
 	case <-ctx.Done():
 		l.Info("graceful shutdown, sending SIGTERM to ffmpeg")
-		cmd.Process.Signal(syscall.SIGTERM)
+		ffCmd.Process.Signal(syscall.SIGTERM)
+		ytdlpCmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-doneCh:
 		case <-time.After(5 * time.Second):
-			cmd.Process.Kill()
+			ffCmd.Process.Kill()
+			ytdlpCmd.Process.Kill()
 			<-doneCh
 		}
 		return ctx.Err()
 	case status := <-healthCh:
-		l.Warn("health check failed, killing ffmpeg", "status", status)
-		cmd.Process.Kill()
+		l.Warn("health check failed, killing pipeline", "status", status)
+		ffCmd.Process.Kill()
+		ytdlpCmd.Process.Kill()
 		<-doneCh
 		return fmt.Errorf("health check: status=%v", status)
 	case err := <-doneCh:
