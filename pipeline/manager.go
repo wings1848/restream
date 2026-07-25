@@ -129,22 +129,17 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		return fmt.Errorf("get sink target: %w", err)
 	}
 
-	// Build yt-dlp pipe command: downloads the stream to stdout with all
-	// auth (cookies, proxy, poToken) handled by yt-dlp.
-	ytdlpCmd := m.source.BuildStreamCmd(ctx,
-		m.cfg.Source.Config["url"],
-		m.cfg.Source.Config["format"],
-	)
-
-	// Build the FFmpeg command reading from yt-dlp's stdout pipe.
+	// Build FFmpeg URL command. With TUN/proxy, FFmpeg can access the CDN
+	// directly. The pipe mode (BuildPipeCommand) is also available for
+	// cases where FFmpeg can't reach the CDN but yt-dlp can.
 	ffPipe := ffmpeg.NewPipeline(ffmpeg.PipelineConfig{
 		StreamInfo: streamInfo,
 		Target:     target,
 		Ffmpeg:     m.cfg.FFmpeg,
 	})
-	ffCmd, err := ffPipe.BuildPipeCommand(ctx, ytdlpCmd)
+	ffCmd, err := ffPipe.BuildCommand(ctx)
 	if err != nil {
-		return fmt.Errorf("build ffmpeg pipeline: %w", err)
+		return fmt.Errorf("build ffmpeg command: %w", err)
 	}
 
 	// Pipe stderr for health monitoring.
@@ -153,17 +148,16 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
-	l.Info("starting yt-dlp | ffmpeg pipeline",
+	l.Info("starting ffmpeg pipeline",
 		"transcode", m.cfg.FFmpeg.Transcode,
 		"video", m.cfg.FFmpeg.VideoEncoder,
 		"audio", m.cfg.FFmpeg.AudioEncoder,
 	)
 
-	// Start yt-dlp first (BuildPipeCmd already starts it).
 	if err := ffCmd.Start(); err != nil {
 		return fmt.Errorf("ffmpeg start: %w", err)
 	}
-	l.Info("pipeline started", "ffmpeg_pid", ffCmd.Process.Pid)
+	l.Info("ffmpeg started", "pid", ffCmd.Process.Pid)
 
 	// Start health monitoring.
 	healthTimeout := time.Duration(m.cfg.Retry.InitialInterval) * time.Second * 3
@@ -178,19 +172,16 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 	case <-ctx.Done():
 		l.Info("graceful shutdown, sending SIGTERM to ffmpeg")
 		ffCmd.Process.Signal(syscall.SIGTERM)
-		ytdlpCmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-doneCh:
 		case <-time.After(5 * time.Second):
 			ffCmd.Process.Kill()
-			ytdlpCmd.Process.Kill()
 			<-doneCh
 		}
 		return ctx.Err()
 	case status := <-healthCh:
-		l.Warn("health check failed, killing pipeline", "status", status)
+		l.Warn("health check failed, killing ffmpeg", "status", status)
 		ffCmd.Process.Kill()
-		ytdlpCmd.Process.Kill()
 		<-doneCh
 		return fmt.Errorf("health check: status=%v", status)
 	case err := <-doneCh:

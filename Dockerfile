@@ -20,10 +20,14 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o restream .
 FROM alpine:3.20
 
 RUN apk add --no-cache \
-    yt-dlp \
+    python3 \
+    py3-pip \
+    nodejs \
     ffmpeg \
     ca-certificates \
-    tzdata
+    tzdata \
+    && pip3 install --break-system-packages -U yt-dlp \
+    && pip3 install --break-system-packages yt-dlp-get-pot
 
 COPY --from=builder /app/restream /usr/local/bin/restream
 
