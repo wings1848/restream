@@ -38,6 +38,14 @@ type YouTube struct {
 	// Proxy is an optional HTTP/SOCKS proxy for yt-dlp (passed via --proxy).
 	// e.g. "socks5://127.0.0.1:1080" or "http://proxy:8080".
 	proxy string
+
+	// poToken is a Proof of Origin token for YouTube's web client.
+	// More durable than cookies — extract once via browser DevTools, lasts weeks.
+	// See: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube
+	poToken string
+
+	// visitorData is paired with poToken for YouTube authentication.
+	visitorData string
 }
 
 // New is the Factory registered under the name "youtube".
@@ -56,6 +64,12 @@ func New(config map[string]string) (source.Source, error) {
 	}
 	if v, ok := config["proxy"]; ok {
 		y.proxy = v
+	}
+	if v, ok := config["po_token"]; ok {
+		y.poToken = v
+	}
+	if v, ok := config["visitor_data"]; ok {
+		y.visitorData = v
 	}
 	return y, nil
 }
@@ -138,6 +152,17 @@ func (y *YouTube) baseArgs() []string {
 	}
 	if y.proxy != "" {
 		args = append(args, "--proxy", y.proxy)
+	}
+	// poToken + visitorData provide durable authentication without cookies.
+	if y.poToken != "" || y.visitorData != "" {
+		parts := []string{"youtube:"}
+		if y.poToken != "" {
+			parts = append(parts, "po_token=web.gvs+"+y.poToken)
+		}
+		if y.visitorData != "" {
+			parts = append(parts, "visitor_data="+y.visitorData)
+		}
+		args = append(args, "--extractor-args", strings.Join(parts, ";"))
 	}
 	return args
 }

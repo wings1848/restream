@@ -26,6 +26,11 @@ pipelines:
         # HTTP/SOCKS proxy for yt-dlp (optional). Use if YouTube is blocked.
         # Examples: "socks5://127.0.0.1:1080", "http://proxy:8080"
         proxy: ""
+        # YouTube poToken + visitor_data (optional, recommended for server use).
+        # More durable than cookies — extract once from browser DevTools, lasts weeks.
+        # See: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube
+        po_token: ""
+        visitor_data: ""
 
     # --- Sink (destination) settings ---
     sink:
