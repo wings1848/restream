@@ -29,6 +29,10 @@ RUN apk add --no-cache \
     && pip3 install --break-system-packages -U yt-dlp \
     && pip3 install --break-system-packages bgutil-ytdlp-pot-provider
 
+# Enable Node.js as JS runtime for yt-dlp n-sig challenge solving.
+# (Deno is preferred by default but not available on Alpine)
+RUN mkdir -p /etc && echo '--js-runtimes node' > /etc/yt-dlp.conf
+
 COPY --from=builder /app/restream /usr/local/bin/restream
 
 ENTRYPOINT ["restream"]
