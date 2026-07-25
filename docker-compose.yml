@@ -1,20 +1,29 @@
-version: "3.9"
-
 services:
+  # PO Token provider — auto-generates YouTube authentication tokens.
+  # Required for YouTube restreaming in 2026+. No manual cookie management.
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      TOKEN_TTL: 6  # hours, default 6h
+
   restream:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    depends_on:
+      - pot-provider
     environment:
-      # Bilibili stream key — passed through from host environment
-      # or set directly here.
       - BILIBILI_STREAM_KEY=${BILIBILI_STREAM_KEY}
+      # Optional HTTP proxy for YouTube access (if outside VPN/TUN)
+      # - http_proxy=http://host.docker.internal:7897
+      # - https_proxy=http://host.docker.internal:7897
     volumes:
-      # Mount the YAML configuration file (read-only).
       - ./config.yaml:/etc/restream/config.yaml:ro
-      # Optional: mount a cookies.txt for authenticated YouTube access.
-      # Uncomment the next line if you use cookies.
+      # Optional: Firefox cookies for auth fallback.
+      # Firefox is the only browser whose cookies yt-dlp can still read in 2026.
       # - ./cookies.txt:/cookies.txt:ro
     command:
       - "--config"

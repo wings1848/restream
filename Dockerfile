@@ -27,7 +27,7 @@ RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     && pip3 install --break-system-packages -U yt-dlp \
-    && pip3 install --break-system-packages yt-dlp-get-pot
+    && pip3 install --break-system-packages bgutil-ytdlp-pot-provider
 
 COPY --from=builder /app/restream /usr/local/bin/restream
 

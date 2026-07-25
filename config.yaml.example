@@ -18,22 +18,27 @@ pipelines:
       config:
         # YouTube live stream URL (required)
         url: "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
-        # Path to Netscape-format cookies file (optional, for members-only streams)
+        # --- Authentication (choose one) ---
+        # Option A (recommended): PO Token Provider sidecar — auto, no config needed.
+        #   docker-compose.yml already includes the pot-provider service.
+        #   yt-dlp auto-discovers it. Leave the fields below empty.
+        #
+        # Option B (fallback): Firefox cookies. Chrome cookies are DEAD since Chrome 127.
+        #   yt-dlp --cookies-from-browser firefox (on host) or mount cookies.txt.
         cookies_file: ""
-        # yt-dlp format selector (optional, defaults to "best")
-        # Examples: "bestvideo+bestaudio", "best[height<=1080]", "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
-        format: ""
-        # HTTP/SOCKS proxy for yt-dlp (optional). Use if YouTube is blocked.
-        # Examples: "socks5://127.0.0.1:1080", "http://proxy:8080"
-        proxy: ""
-        # YouTube poToken + visitor_data (optional, recommended for server use).
-        # More durable than cookies — extract once from browser DevTools, lasts weeks.
-        # See: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube
+        #
+        # Option C: Manual poToken + visitor_data (extract from browser DevTools).
         po_token: ""
         visitor_data: ""
-        # Force IPv4 for yt-dlp connections (optional). Use if your proxy
-        # only supports IPv4 but YouTube CDN defaults to IPv6.
-        force_ipv4: "true"
+        # --- Stream options ---
+        # yt-dlp format selector (optional, defaults to "best")
+        # Examples: "bestvideo+bestaudio", "best[height<=1080]"
+        format: ""
+        # HTTP/SOCKS proxy (optional). Use if YouTube is blocked.
+        # TUN mode (VPN) is preferred — no proxy config needed.
+        proxy: ""
+        # Force IPv4 if proxy only supports IPv4
+        force_ipv4: "false"
 
     # --- Sink (destination) settings ---
     sink:
