@@ -23,6 +23,9 @@ pipelines:
         # yt-dlp format selector (optional, defaults to "best")
         # Examples: "bestvideo+bestaudio", "best[height<=1080]", "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
         format: ""
+        # HTTP/SOCKS proxy for yt-dlp (optional). Use if YouTube is blocked.
+        # Examples: "socks5://127.0.0.1:1080", "http://proxy:8080"
+        proxy: ""
 
     # --- Sink (destination) settings ---
     sink:

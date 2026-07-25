@@ -3,6 +3,8 @@
 # =============================================================================
 FROM golang:1.22-alpine AS builder
 
+ENV GOPROXY=https://goproxy.cn,direct
+
 RUN apk add --no-cache ca-certificates git
 
 WORKDIR /app

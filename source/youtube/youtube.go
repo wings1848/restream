@@ -34,6 +34,10 @@ type YouTube struct {
 	// Format controls the yt-dlp format selector (e.g. "best", "bestvideo+bestaudio").
 	// Defaults to "best" when empty.
 	format string
+
+	// Proxy is an optional HTTP/SOCKS proxy for yt-dlp (passed via --proxy).
+	// e.g. "socks5://127.0.0.1:1080" or "http://proxy:8080".
+	proxy string
 }
 
 // New is the Factory registered under the name "youtube".
@@ -49,6 +53,9 @@ func New(config map[string]string) (source.Source, error) {
 		y.format = v
 	} else {
 		y.format = "best"
+	}
+	if v, ok := config["proxy"]; ok {
+		y.proxy = v
 	}
 	return y, nil
 }
@@ -128,6 +135,9 @@ func (y *YouTube) baseArgs() []string {
 	}
 	if y.userAgent != "" {
 		args = append(args, "--user-agent", y.userAgent)
+	}
+	if y.proxy != "" {
+		args = append(args, "--proxy", y.proxy)
 	}
 	return args
 }
