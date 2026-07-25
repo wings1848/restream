@@ -31,6 +31,9 @@ pipelines:
         # See: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube
         po_token: ""
         visitor_data: ""
+        # Force IPv4 for yt-dlp connections (optional). Use if your proxy
+        # only supports IPv4 but YouTube CDN defaults to IPv6.
+        force_ipv4: "true"
 
     # --- Sink (destination) settings ---
     sink:

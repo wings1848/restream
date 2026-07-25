@@ -47,6 +47,10 @@ type YouTube struct {
 
 	// visitorData is paired with poToken for YouTube authentication.
 	visitorData string
+
+	// forceIPv4 forces yt-dlp to use IPv4. Useful when proxy only supports
+	// IPv4 but YouTube CDN signatures default to IPv6.
+	forceIPv4 bool
 }
 
 // New is the Factory registered under the name "youtube".
@@ -71,6 +75,9 @@ func New(config map[string]string) (source.Source, error) {
 	}
 	if v, ok := config["visitor_data"]; ok {
 		y.visitorData = v
+	}
+	if v, ok := config["force_ipv4"]; ok && v != "" && v != "false" && v != "0" {
+		y.forceIPv4 = true
 	}
 	return y, nil
 }
@@ -188,6 +195,9 @@ func (y *YouTube) buildAuthArgs() ([]string, func()) {
 	}
 	if y.proxy != "" {
 		extraArgs = append(extraArgs, "--proxy", y.proxy)
+	}
+	if y.forceIPv4 {
+		extraArgs = append(extraArgs, "--force-ipv4")
 	}
 	if y.poToken != "" || y.visitorData != "" {
 		parts := []string{"youtube:"}
