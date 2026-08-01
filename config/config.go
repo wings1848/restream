@@ -19,8 +19,8 @@ type Config struct {
 
 // GlobalConfig holds process-wide settings.
 type GlobalConfig struct {
-	LogLevel             string `yaml:"log_level"`
-	HealthCheckInterval  int    `yaml:"health_check_interval"`
+	LogLevel            string `yaml:"log_level"`
+	HealthCheckInterval int    `yaml:"health_check_interval"`
 }
 
 // Pipeline describes a single source→sink restream pipeline.
@@ -53,13 +53,14 @@ type FFmpegConfig struct {
 	AudioEncoder string `yaml:"audio_encoder"` // aac, libmp3lame, ...
 	AudioBitrate string `yaml:"audio_bitrate"` // 128k, 192k, ...
 	Scale        string `yaml:"scale"`         // resolution scaling (e.g. "-1:720"), empty = no scale
+	Threads      int    `yaml:"threads"`       // encoder threads; 0 = ffmpeg default (all cores)
 }
 
 // RetryConfig controls exponential-backoff reconnection.
 type RetryConfig struct {
-	MaxRetries       int     `yaml:"max_retries"`       // 0 = unlimited
-	InitialInterval  int     `yaml:"initial_interval"`  // seconds
-	MaxInterval      int     `yaml:"max_interval"`       // seconds
+	MaxRetries        int     `yaml:"max_retries"`      // 0 = unlimited
+	InitialInterval   int     `yaml:"initial_interval"` // seconds
+	MaxInterval       int     `yaml:"max_interval"`     // seconds
 	BackoffMultiplier float64 `yaml:"backoff_multiplier"`
 }
 
@@ -260,5 +261,3 @@ func LoadWithFlags(flags *CLIFlags) (*Config, error) {
 
 	return cfg, nil
 }
-
-

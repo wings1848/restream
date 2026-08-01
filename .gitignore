@@ -3,3 +3,4 @@ restream
 config.yaml
 .env*
 cookies.txt
+*.log

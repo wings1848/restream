@@ -18,18 +18,10 @@ pipelines:
       config:
         # YouTube live stream URL (required)
         url: "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
-        # --- Authentication (choose one) ---
-        # Option A (recommended): PO Token Provider sidecar — auto, no config needed.
+        # --- Authentication ---
+        # PO Token Provider sidecar — auto, no config needed.
         #   docker-compose.yml already includes the pot-provider service.
-        #   yt-dlp auto-discovers it. Leave the fields below empty.
-        #
-        # Option B (fallback): Firefox cookies. Chrome cookies are DEAD since Chrome 127.
-        #   yt-dlp --cookies-from-browser firefox (on host) or mount cookies.txt.
-        cookies_file: ""
-        #
-        # Option C: Manual poToken + visitor_data (extract from browser DevTools).
-        po_token: ""
-        visitor_data: ""
+        #   yt-dlp auto-discovers it.
         # --- Stream options ---
         # yt-dlp format selector (optional, defaults to "best")
         # Examples: "bestvideo+bestaudio", "best[height<=1080]"
@@ -70,6 +62,9 @@ pipelines:
       # Resolution scaling (optional, used when transcoding). Empty = no scaling.
       # Examples: "-1:720" for 720p with proportional width, "1280:720" for exact
       # scale: ""
+      # Encoder threads: 0 = ffmpeg default (one per CPU core, highest memory).
+      # Limit to cap transcode memory, e.g. 2 = ~200MB for 1080p x264.
+      threads: 0
 
     # --- Auto-reconnect / retry settings ---
     retry:

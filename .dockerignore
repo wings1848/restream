@@ -1,7 +1,12 @@
 .git
 .claude
 *.md
+config.yaml
 config.yaml.example
 docker-compose.yml
 .env*
 restream
+test-setup.sh
+*.log
+.gitignore
+.dockerignore

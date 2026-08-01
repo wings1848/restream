@@ -142,7 +142,8 @@ pipelines:
       type: youtube              # 源平台类型（注册的 Source 名称）
       config:
         url: "https://..."       # 直播源 URL（必填）
-        cookies_file: ""         # NetScape 格式 cookies 文件路径（选填，会员限定直播需要）
+        proxy: ""                # HTTP/SOCKS 代理（选填，YouTube 被墙时使用）
+        force_ipv4: "false"      # 强制 IPv4（代理仅支持 IPv4 时使用）
 
     sink:
       type: bilibili             # 目标平台类型（注册的 Sink 名称）
@@ -157,6 +158,7 @@ pipelines:
       crf: 23                    # 视频质量 (0-51, 越小质量越高)
       audio_encoder: aac         # 音频编码器
       audio_bitrate: 128k        # 音频码率
+      threads: 0                 # 编码线程数（0 = ffmpeg 默认，全核；限制可降内存）
 
     retry:
       max_retries: 0             # 最大重试次数（0 = 无限重试）
@@ -199,7 +201,6 @@ restream 通过接口抽象实现平台无关性，添加新平台只需实现�
        Name() string
        GetStream(ctx context.Context, url string) (*source.StreamInfo, error)
        ValidateURL(url string) error
-       ProbeFormat(ctx context.Context, url string) (*source.StreamInfo, error)
    }
    ```
 3. 在 `init()` 中注册：
@@ -257,7 +258,7 @@ Usage of restream:
 
 - 确认 `yt-dlp` 已安装且在 `PATH` 中
 - 检查 YouTube 直播是否真正处于直播状态（非预定、非已结束）
-- 如果是会员限定直播，需提供有效的 `cookies_file`
+- 确认 pot-provider 容器在运行（`docker ps` 查看），PO Token 认证依赖它
 
 ### "ffmpeg exited with error"
 
@@ -269,7 +270,7 @@ Usage of restream:
 
 - 检查网络稳定性
 - 适当增大 `retry.initial_interval` 和 `retry.max_interval`
-- 检查是否被源平台限流（yt-dlp 可能需要设置 `--user-agent`）
+- 检查是否被源平台限流（可尝试调整代理或切换线路）
 
 ### 容器运行时报 `exec: "yt-dlp": executable file not found in $PATH`
 

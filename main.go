@@ -26,12 +26,12 @@ func main() {
 	flag.StringVar(&flags.URL, "url", "", "YouTube live URL (quick-start, no config file)")
 	flag.StringVar(&flags.StreamKey, "key", "", "Bilibili stream key (quick-start, no config file)")
 	flag.StringVar(&flags.Transcode, "transcode", "", "Transcode mode: auto|copy|force")
-	flag.StringVar(&flags.LogLevel, "log-level", "info", "Log level: debug|info|warn|error")
+	flag.StringVar(&flags.LogLevel, "log-level", "", "Log level: debug|info|warn|error (default: config log_level or info)")
 	flag.Parse()
 
-	// Setup structured text logger.
-	level := parseLogLevel(flags.LogLevel)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	// Setup structured text logger. The CLI flag wins over the config file;
+	// the final level is set after config loading below.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(flags.LogLevel)}))
 	slog.SetDefault(logger)
 
 	// Load and validate configuration.
@@ -39,6 +39,13 @@ func main() {
 	if err != nil {
 		logger.Error("failed to load configuration", "error", err)
 		os.Exit(1)
+	}
+
+	// When --log-level is omitted, honor the config file's global.log_level.
+	if flags.LogLevel == "" {
+		level := parseLogLevel(cfg.Global.LogLevel)
+		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+		slog.SetDefault(logger)
 	}
 
 	logger.Info("restream starting",

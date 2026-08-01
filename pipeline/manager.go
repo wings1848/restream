@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"syscall"
 	"time"
 
@@ -107,21 +108,22 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 }
 
-// runOnce resolves the source stream, builds a yt-dlp → ffmpeg pipeline,
-// runs it with health monitoring, and returns nil on clean exit or an error.
+// runOnce resolves the source stream with yt-dlp, builds the FFmpeg
+// command, runs it with health monitoring, and returns nil on clean
+// exit or an error.
 func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
-	// Resolve stream URLs for codec probing.
+	// Resolve stream URLs (used as FFmpeg inputs) and codec metadata. The
+	// codecs drive the auto-transcode decision in BuildCommand.
 	l.Debug("resolving source stream", "url", m.cfg.Source.Config["url"])
 	streamInfo, err := m.source.GetStream(ctx, m.cfg.Source.Config["url"])
 	if err != nil {
 		return fmt.Errorf("resolve source: %w", err)
 	}
-
-	// Probe codec format for auto transcode decision.
-	if probeInfo, probeErr := m.source.ProbeFormat(ctx, m.cfg.Source.Config["url"]); probeErr == nil {
-		streamInfo.VideoCodec = probeInfo.VideoCodec
-		streamInfo.AudioCodec = probeInfo.AudioCodec
-	}
+	l.Debug("source resolved",
+		"urls", len(streamInfo.URLs),
+		"video_codec", streamInfo.VideoCodec,
+		"audio_codec", streamInfo.AudioCodec,
+	)
 
 	// Get sink target.
 	target, err := m.sink.GetTarget(ctx, m.cfg.Sink.Config)
@@ -129,18 +131,14 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		return fmt.Errorf("get sink target: %w", err)
 	}
 
-	// Build FFmpeg URL command. With TUN/proxy, FFmpeg can access the CDN
-	// directly. The pipe mode (BuildPipeCommand) is also available for
-	// cases where FFmpeg can't reach the CDN but yt-dlp can.
-	ffPipe := ffmpeg.NewPipeline(ffmpeg.PipelineConfig{
+	// Build the FFmpeg command. yt-dlp has already resolved the stream
+	// URLs (GetStream); FFmpeg connects to them directly.
+	ffCmd := ffmpeg.NewPipeline(ffmpeg.PipelineConfig{
 		StreamInfo: streamInfo,
 		Target:     target,
 		Ffmpeg:     m.cfg.FFmpeg,
-	})
-	ffCmd, err := ffPipe.BuildCommand(ctx)
-	if err != nil {
-		return fmt.Errorf("build ffmpeg command: %w", err)
-	}
+	}).BuildCommand(ctx)
+	l.Debug("ffmpeg command", "args", strings.Join(ffCmd.Args, " "))
 
 	// Pipe stderr for health monitoring.
 	stderrPipe, err := ffCmd.StderrPipe()

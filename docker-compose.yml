@@ -22,9 +22,6 @@ services:
       # - https_proxy=http://host.docker.internal:7897
     volumes:
       - ./config.yaml:/etc/restream/config.yaml:ro
-      # Optional: Firefox cookies for auth fallback.
-      # Firefox is the only browser whose cookies yt-dlp can still read in 2026.
-      # - ./cookies.txt:/cookies.txt:ro
     command:
       - "--config"
       - "/etc/restream/config.yaml"
