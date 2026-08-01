@@ -23,16 +23,9 @@ restream 是一个轻量级的直播流转发工具：通过 `yt-dlp` 拉取 You
 
 ## 🚀 使用 AI 助手部署（推荐）
 
-最快的方式：把本仓库交给 AI 编码助手（如 Claude Code），它会替你完成部署——询问部署方式、帮你拆分 Bilibili 推流地址、配置、启动并通过 `/healthz` 验证。复制下面内容、填入你的信息即可：
-
 ```text
-部署 restream，用 docker compose。
-YouTube 直播：<你的 YouTube 直播 URL>
-Bilibili 推流：<后台给的完整 rtmp://...?streamname=..&key=..&pflag=2>
-转码：auto
+https://github.com/wings1848/restream/blob/master/skills/restream-deploy-SKILL.md
 ```
-
-AI 会使用仓库内置的 [`restream-deploy` skill](skills/restream-deploy-SKILL.md) 完成部署。
 
 ## 快速开始（手动）
 

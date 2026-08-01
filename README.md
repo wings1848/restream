@@ -23,16 +23,9 @@ A lightweight, unattended live-stream **mirror / relay**: it pulls a YouTube liv
 
 ## 🚀 Deploy with an AI agent (recommended)
 
-Fastest setup — hand this repo to an AI coding assistant (e.g. Claude Code) and it deploys restream for you: asks for the deploy mode, splits your Bilibili URL, starts the relay, and verifies via `/healthz`. Copy-paste and fill in your values:
-
 ```text
-Deploy restream with docker compose.
-YouTube live: <your YouTube live URL>
-Bilibili push: <full rtmp://...?streamname=..&key=..&pflag=2 from dashboard>
-Transcode: auto
+https://github.com/wings1848/restream/blob/master/skills/restream-deploy-SKILL.md
 ```
-
-The assistant uses the bundled [`restream-deploy` skill](skills/restream-deploy-SKILL.md).
 
 ## Quick start (manual)
 
