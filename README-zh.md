@@ -21,6 +21,16 @@ restream 是一个轻量级的直播流转发工具：通过 `yt-dlp` 拉取 You
 - **多管道并行** — 一个进程内同时运行多条独立管道
 - **Docker 镜像** — 多阶段构建，内置静态 FFmpeg 与最新 yt-dlp
 
+## 🚀 使用 AI 助手部署（推荐）
+
+把本仓库的 README 链接复制给 AI 编码助手（如 Claude Code）：
+
+```text
+https://github.com/wings1848/restream
+```
+
+AI 读取 README 后，会先询问你部署方式（docker compose / 二进制）与必要参数（YouTube 地址、Bilibili 推流地址），再替你完成部署。
+
 ## 快速开始（手动）
 
 ### 方式一：CLI（单管道，无需配置文件）
