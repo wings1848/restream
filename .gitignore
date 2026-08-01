@@ -1,4 +1,8 @@
-.claude/
+# .claude: commit shared convention files (settings.json, hooks), ignore local-only
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/gofmt-on-edit.sh
 restream
 config.yaml
 .env*
