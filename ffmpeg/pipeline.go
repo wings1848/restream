@@ -44,18 +44,31 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 	}
 }
 
+// hlsPullFlags are per-input options for robust live HLS pulls. They must
+// precede each "-i": real-time demuxing (nobuffer), streamed reconnect with a
+// bounded delay, and a 10s read timeout so a hung segment fetch can't block
+// the pipeline forever (ffmpeg's default HTTP read timeout is infinite).
+var hlsPullFlags = []string{
+	"-fflags", "nobuffer+genpts",
+	"-reconnect", "1",
+	"-reconnect_streamed", "1",
+	"-reconnect_delay_max", "5",
+	"-rw_timeout", "10000000",
+}
+
 // BuildCommand constructs an FFmpeg command that reads the stream URLs
 // resolved earlier by yt-dlp (Source.GetStream) and pushes to the RTMP
 // target. FFmpeg connects to the CDN directly; yt-dlp is not in the
 // download path.
 func (p *Pipeline) BuildCommand(ctx context.Context) *exec.Cmd {
-	args := []string{"-re", "-y"}
+	args := []string{"-y", "-nostdin"}
 
 	urls := p.streamInfo.URLs
 	if len(urls) > 2 {
 		urls = urls[:2]
 	}
 	for _, u := range urls {
+		args = append(args, hlsPullFlags...)
 		args = append(args, "-i", u)
 	}
 	if len(urls) >= 2 {
@@ -63,30 +76,61 @@ func (p *Pipeline) BuildCommand(ctx context.Context) *exec.Cmd {
 	}
 
 	mode := p.ffCfg.Transcode
-	needsTranscode := mode == string(TranscodeForce)
-	if mode == string(TranscodeAuto) {
-		needsTranscode = NeedsTranscode(p.streamInfo)
+
+	videoTranscode := false
+	audioTranscode := false
+	switch mode {
+	case string(TranscodeForce):
+		// Force re-encodes both streams regardless of source codecs.
+		videoTranscode = true
+		audioTranscode = true
+	case string(TranscodeAuto):
+		videoTranscode = needsVideoTranscode(p.streamInfo)
+		audioTranscode = needsAudioTranscode(p.streamInfo)
 	}
 
-	if needsTranscode {
-		args = append(args, "-c:v", p.ffCfg.VideoEncoder)
-		// Limit encoder threads to cap memory usage; ffmpeg defaults to one
-		// thread per core, each with its own lookahead/frame buffers.
-		if p.ffCfg.Threads > 0 {
-			args = append(args, "-threads", fmt.Sprintf("%d", p.ffCfg.Threads))
+	if videoTranscode || audioTranscode {
+		// Transcode each stream independently so a compatible stream is
+		// copied instead of being needlessly re-encoded 24/7.
+		if videoTranscode {
+			args = append(args, "-c:v", p.ffCfg.VideoEncoder)
+			// Limit encoder threads to cap memory usage; ffmpeg defaults to one
+			// thread per core, each with its own lookahead/frame buffers.
+			if p.ffCfg.Threads > 0 {
+				args = append(args, "-threads", fmt.Sprintf("%d", p.ffCfg.Threads))
+			}
+			if p.ffCfg.Preset != "" {
+				args = append(args, "-preset", p.ffCfg.Preset)
+			}
+			if p.ffCfg.CRF > 0 {
+				args = append(args, "-crf", fmt.Sprintf("%d", p.ffCfg.CRF))
+			}
+			if p.ffCfg.Scale != "" {
+				args = append(args, "-vf", fmt.Sprintf("scale=%s", p.ffCfg.Scale))
+			}
+			// Live-encoding flags: low latency, FLV-safe pixel format, and a
+			// keyframe cadence (GOP) of 2x the source FPS.
+			gop := 60
+			if p.streamInfo.FPS > 0 {
+				gop = int(2 * p.streamInfo.FPS)
+			}
+			args = append(args,
+				"-tune", "zerolatency",
+				"-sc_threshold", "0",
+				"-pix_fmt", "yuv420p",
+				"-g", fmt.Sprintf("%d", gop),
+			)
+		} else {
+			args = append(args, "-c:v", "copy")
 		}
-		if p.ffCfg.Preset != "" {
-			args = append(args, "-preset", p.ffCfg.Preset)
-		}
-		if p.ffCfg.CRF > 0 {
-			args = append(args, "-crf", fmt.Sprintf("%d", p.ffCfg.CRF))
-		}
-		if p.ffCfg.Scale != "" {
-			args = append(args, "-vf", fmt.Sprintf("scale=%s", p.ffCfg.Scale))
-		}
-		args = append(args, "-c:a", p.ffCfg.AudioEncoder)
-		if p.ffCfg.AudioBitrate != "" {
-			args = append(args, "-b:a", p.ffCfg.AudioBitrate)
+
+		if audioTranscode {
+			args = append(args, "-c:a", p.ffCfg.AudioEncoder)
+			if p.ffCfg.AudioBitrate != "" {
+				args = append(args, "-b:a", p.ffCfg.AudioBitrate)
+			}
+		} else {
+			args = append(args, "-c:a", "copy")
 		}
 	} else {
 		args = append(args, "-c", "copy")
@@ -103,15 +147,22 @@ var passThroughCodecs = map[string]struct{}{
 	"aac":  {},
 }
 
-// NeedsTranscode returns true when source codecs are known and incompatible
-// with FLV passthrough. Unknown codecs (empty field) default to copy as a
-// safe fallback.
-func NeedsTranscode(info *source.StreamInfo) bool {
+// needsVideoTranscode reports whether the source video codec must be
+// re-encoded for FLV passthrough. Unknown codecs (empty field) default to
+// copy as a safe fallback.
+func needsVideoTranscode(info *source.StreamInfo) bool {
 	if info.VideoCodec != "" {
 		if _, ok := passThroughCodecs[info.VideoCodec]; !ok {
 			return true
 		}
 	}
+	return false
+}
+
+// needsAudioTranscode reports whether the source audio codec must be
+// re-encoded for FLV passthrough. Unknown codecs (empty field) default to
+// copy as a safe fallback.
+func needsAudioTranscode(info *source.StreamInfo) bool {
 	if info.AudioCodec != "" {
 		if _, ok := passThroughCodecs[info.AudioCodec]; !ok {
 			return true
