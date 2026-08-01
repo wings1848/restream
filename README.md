@@ -39,21 +39,39 @@ restream/
 
 ### 直接运行（不使用 Docker）
 
-- Go 1.26 或更高版本（仅编译时需要）
+- Go 1.22 或更高版本（仅编译时需要）
 - [FFmpeg](https://ffmpeg.org/)（运行时可执行文件，需在 `PATH` 中）
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)（运行时可执行文件，需在 `PATH` 中）
+- **PO Token Provider 边车（必需）** — 2026 年起 YouTube 强制要求 PO Token 签名，缺少它拉流会直接失败。restream 的 yt-dlp 插件默认连接 `127.0.0.1:4416`，请确保该地址可达（CLI 与配置文件模式同样依赖它，不只是 Docker）。
 
-安装 FFmpeg 和 yt-dlp：
+> **注意**：发行版自带的 yt-dlp（apt/brew/pacman）通常太旧，无法处理 PO Token 和 n-sig 挑战，请安装最新版：
+
+```bash
+# 推荐：pipx 安装最新版 yt-dlp（或 pip install -U yt-dlp）
+pipx install yt-dlp
+```
+
+FFmpeg 用系统包管理器安装即可：
 
 ```bash
 # Ubuntu / Debian
-sudo apt install ffmpeg yt-dlp
+sudo apt install ffmpeg
 
 # macOS (Homebrew)
-brew install ffmpeg yt-dlp
+brew install ffmpeg
 
 # Arch Linux
-sudo pacman -S ffmpeg yt-dlp
+sudo pacman -S ffmpeg
+```
+
+非 Docker 直接运行时，用 Docker 以 host 网络启动边车（必须与 yt-dlp 同网络命名空间，才能访问 `127.0.0.1:4416`）：
+
+```bash
+docker run -d --name pot-provider --network host \
+  --init --env TOKEN_TTL=6 --restart unless-stopped \
+  brainicism/bgutil-ytdlp-pot-provider:latest
+# 验证：
+curl -fsS http://127.0.0.1:4416/ping
 ```
 
 ### 使用 Docker
@@ -70,7 +88,7 @@ sudo pacman -S ffmpeg yt-dlp
 # 编译
 go build -o restream .
 
-# 运行（需要有效的 Bilibili 推流密钥）
+# 运行（需要有效的 Bilibili 推流密钥，且 PO Token Provider 边车已在 127.0.0.1:4416 运行，见「前置要求」）
 ./restream --url "https://www.youtube.com/watch?v=LIVE_VIDEO_ID" \
            --key "你的Bilibili推流密钥" \
            --transcode auto
@@ -80,7 +98,8 @@ go build -o restream .
 - `--url` — YouTube 直播页面 URL（必填）
 - `--key` — Bilibili 推流密钥/码（必填）
 - `--transcode` — 转码模式，可选 `auto`、`copy`、`force`（默认 `auto`）
-- `--log-level` — 日志级别，可选 `debug`、`info`、`warn`、`error`（默认 `info`）
+- `--log-level` — 日志级别，可选 `debug`、`info`、`warn`、`error`（默认取 config 的 `global.log_level`，未配置时为 `info`）
+- `--version` — 打印版本号后退出
 
 ### 方式二：配置文件模式（推荐用于生产环境）
 
@@ -115,6 +134,7 @@ vim config.yaml
    ```bash
    docker compose up -d
    ```
+   > `docker-compose.yml` 已包含 pot-provider 服务，且两个服务都使用 `network_mode: host`——yt-dlp 通过 `127.0.0.1:4416` 访问 PO Token 认证（默认 bridge 网络下 `127.0.0.1` 是容器自身，认证会静默失败）。
 
 4. 查看日志：
    ```bash
@@ -133,7 +153,7 @@ vim config.yaml
 ```yaml
 global:
   log_level: info              # 日志级别: debug | info | warn | error
-  health_check_interval: 10    # 健康检查间隔（秒）
+  health_check_interval: 10    # 直播“停滞”检测超时（秒）：ffmpeg 该秒数内无进度即判定停滞并重连，建议 3-60
 
 pipelines:
   - name: "youtube-to-bilibili"  # 管道名称（日志中标识用）
@@ -142,6 +162,7 @@ pipelines:
       type: youtube              # 源平台类型（注册的 Source 名称）
       config:
         url: "https://..."       # 直播源 URL（必填）
+        format: "best"           # yt-dlp 格式选择器（默认 best；直播用 bestvideo+bestaudio 常不可用，见下）
         proxy: ""                # HTTP/SOCKS 代理（选填，YouTube 被墙时使用）
         force_ipv4: "false"      # 强制 IPv4（代理仅支持 IPv4 时使用）
 
@@ -156,6 +177,7 @@ pipelines:
       video_encoder: libx264     # 视频编码器
       preset: veryfast           # x264 编码预设
       crf: 23                    # 视频质量 (0-51, 越小质量越高)
+      scale: ""                  # 分辨率缩放（选填，转码时生效，如 "-1:720" 等比缩放）
       audio_encoder: aac         # 音频编码器
       audio_bitrate: 128k        # 音频码率
       threads: 0                 # 编码线程数（0 = ffmpeg 默认，全核；限制可降内存）
@@ -166,6 +188,37 @@ pipelines:
       max_interval: 60           # 最大重试等待（秒）
       backoff_multiplier: 2.0    # 退避指数
 ```
+
+> **关于 `format`（直播流）**：默认 `best`（单个合并后的 HLS 流）对 YouTube 直播最稳。`bestvideo+bestaudio` 是面向点播（VOD）的选择器，直播流上常常没有可用的分离音视频轨，yt-dlp 会直接报错；仅当你确实需要分离轨时才显式设置。
+
+> **关于 `health_check_interval`**：它是直播“卡住”检测的超时时间（秒），不是简单的轮询间隔——ffmpeg 在这段时间内没有输出进度即判定为停滞并触发重连。取值过小会在慢网下误判，过大则断流后恢复慢，建议 3-60。
+
+### Bilibili 推流密钥格式（常见首次配置错误）
+
+Bilibili 直播后台给出的是一整条 RTMP 地址，形如：
+
+```
+rtmp://live-push.bilivideo.com/live-bvc/?streamname=abc_123&key=xxx&pflag=2
+```
+
+restream 将其拆成两项配置：
+
+| 配置项 | 取值 |
+|--------|------|
+| `rtmp_url` | 地址到 `live-bvc/` 为止：`rtmp://live-push.bilivideo.com/live-bvc/` |
+| `stream_key` | `?` 之后的部分：`streamname=abc_123&key=xxx&pflag=2` |
+
+示例：
+
+```yaml
+sink:
+  type: bilibili
+  config:
+    rtmp_url: "rtmp://live-push.bilivideo.com/live-bvc/"
+    stream_key: "streamname=abc_123&key=xxx&pflag=2"
+```
+
+常见错误：把整条地址塞进 `stream_key`，或把 `?streamname=...` 也写进 `rtmp_url`，导致 RTMP 握手失败。Bilibili 后台“推流码”页面会分别给出“服务器地址（对应 `rtmp_url`）”与“串流密钥（对应 `stream_key`）”，按上述拆分即可。
 
 ### 转码模式说明
 
@@ -249,16 +302,20 @@ Usage of restream:
   --url string        YouTube 直播 URL（无配置文件时的快速启动参数）
   --key string        Bilibili 推流密钥（无配置文件时的快速启动参数）
   --transcode string  转码模式: auto | copy | force
-  --log-level string  日志级别: debug | info | warn | error（默认 "info"）
+  --log-level string  日志级别: debug | info | warn | error（默认 config 的 global.log_level 或 info）
+  --version           打印版本号后退出
 ```
 
 ## 故障排除
 
 ### "yt-dlp failed: ..."
 
-- 确认 `yt-dlp` 已安装且在 `PATH` 中
+- 确认 `yt-dlp` 已安装且在 `PATH` 中（且为最新版，见「前置要求」）
 - 检查 YouTube 直播是否真正处于直播状态（非预定、非已结束）
-- 确认 pot-provider 容器在运行（`docker ps` 查看），PO Token 认证依赖它
+- **确认 PO Token Provider 边车在运行且可被访问** — CLI 模式与配置文件模式同样依赖它（不只是 Docker 模式）。yt-dlp 插件“自动发现”的前提是边车真的监听在 `127.0.0.1:4416`：
+  - Docker Compose：两个服务使用 `network_mode: host`（见 `docker-compose.yml`），边车绑定宿主机 `127.0.0.1:4416`
+  - 直接运行：边车需监听在 yt-dlp 所在网络命名空间的 `127.0.0.1:4416`，或通过插件 `base_url` 指向实际地址
+  - 验证：`curl -fsS http://127.0.0.1:4416/ping`
 
 ### "ffmpeg exited with error"
 
