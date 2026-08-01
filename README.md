@@ -21,12 +21,6 @@ A lightweight, unattended live-stream **mirror / relay**: it pulls a YouTube liv
 - **Multi-pipeline** — run several relays in one process, independently.
 - **Docker multi-stage image** — minimal Alpine runtime with static FFmpeg and a current `yt-dlp` bundled.
 
-## 🚀 Deploy with an AI agent (recommended)
-
-Hand this repo to an AI coding assistant (e.g. Claude Code) and say "deploy restream". The AI reads the bundled [`skills/restream-deploy-SKILL.md`](skills/restream-deploy-SKILL.md), asks you for the deploy mode (docker compose / binary) and the required inputs (YouTube URL, Bilibili push address), then sets up, starts, and verifies the relay.
-
-If the AI can't read the repo file, paste that file's contents to it instead.
-
 ## Quick start (manual)
 
 ### 1. CLI (single pipeline, no config file)
