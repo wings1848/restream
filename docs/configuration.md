@@ -34,7 +34,7 @@ pipelines:
       audio_encoder: aac
       audio_bitrate: 128k
       threads: 2               # default 2; 0 = FFmpeg default (one per core)
-      maxrate: "8M"            # uplink cap (transcode only), default 8M
+      maxrate: "6M"            # uplink cap (transcode only), default 6M
     retry:
       max_retries: 0           # 0 = retry forever
       initial_interval: 5      # first retry delay (seconds)
@@ -72,7 +72,7 @@ You can add more entries under `pipelines:` — each pipeline runs concurrently 
 | `ffmpeg.audio_encoder` | `aac` | Audio encoder: `aac` \| `libmp3lame` \| `libopus` \| `copy`. |
 | `ffmpeg.audio_bitrate` | `128k` | Audio bitrate, e.g. `64k` \| `128k` \| `192k` \| `256k` \| `320k`. |
 | `ffmpeg.threads` | `2` | Encoder threads (≈ 256 MiB transcode memory for 1080p x264). Set `0` to keep FFmpeg's own default (one per CPU core, highest memory). |
-| `ffmpeg.maxrate` | `"8M"` | Uplink video bitrate cap (adds `-maxrate 8M -bufsize 8M`), near Bilibili's 8000 kbps limit. Transcode only — ignored in `copy` mode, which forwards the source bitrate unchanged. |
+| `ffmpeg.maxrate` | `"6M"` | Uplink video bitrate cap (adds `-maxrate 6M -bufsize 6M`), kept below Bilibili's upload limit (~8M on paper, lower for non-partner rooms) so transcode peaks don't get the stream dropped. Transcode only — ignored in `copy` mode, which forwards the source bitrate unchanged. |
 | `ffmpeg.proxy` | `""` | HTTP/SOCKS proxy for the HLS pull (ffmpeg `-http_proxy`, per input). Required when YouTube is blocked on the direct path, and when the source URL is IP-bound to the resolving proxy exit (YouTube's signed URLs 403 on segments fetched from a different IP). Usually mirrors `source.config.proxy`. |
 | `retry.max_retries` | `0` | Maximum retry attempts; `0` = retry forever. |
 | `retry.initial_interval` | `5` | First retry delay (seconds). |
