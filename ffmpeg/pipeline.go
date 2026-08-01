@@ -30,11 +30,9 @@ type Pipeline struct {
 
 // PipelineConfig groups parameters for NewPipeline.
 type PipelineConfig struct {
-	StreamInfo   *source.StreamInfo
-	Target       *sink.RTMPTarget
-	Transcode    TranscodeMode
-	Ffmpeg       config.FFmpegConfig
-	SourceCmd    *exec.Cmd // optional: yt-dlp command piping stream to ffmpeg stdin
+	StreamInfo *source.StreamInfo
+	Target     *sink.RTMPTarget
+	Ffmpeg     config.FFmpegConfig
 }
 
 // NewPipeline creates a new Pipeline with the given configuration.
@@ -46,70 +44,98 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 	}
 }
 
-// BuildPipeCommand builds a yt-dlp → ffmpeg pipeline. yt-dlp handles
-// all authentication and outputs the stream to stdout; ffmpeg reads
-// from stdin and pushes to the RTMP target. The caller must Start the
-// returned ffmpeg command (yt-dlp is already started).
-func (p *Pipeline) BuildPipeCommand(ctx context.Context, ytdlpCmd *exec.Cmd) (*exec.Cmd, error) {
-	ffCmd := p.buildFfmpegCmd(ctx, true)
-	var err error
-	ffCmd.Stdin, err = ytdlpCmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("yt-dlp stdout pipe: %w", err)
-	}
-	if err := ytdlpCmd.Start(); err != nil {
-		return nil, fmt.Errorf("yt-dlp start: %w", err)
-	}
-	return ffCmd, nil
+// hlsPullFlags are per-input options for robust live HLS pulls. They must
+// precede each "-i": real-time demuxing (nobuffer), streamed reconnect with a
+// bounded delay, and a 10s read timeout so a hung segment fetch can't block
+// the pipeline forever (ffmpeg's default HTTP read timeout is infinite).
+var hlsPullFlags = []string{
+	"-fflags", "nobuffer+genpts",
+	"-reconnect", "1",
+	"-reconnect_streamed", "1",
+	"-reconnect_delay_max", "5",
+	"-rw_timeout", "10000000",
 }
 
-// BuildCommand constructs a standalone FFmpeg command that reads stream URLs
-// directly. For YouTube, prefer BuildPipeCommand instead — it routes via
-// yt-dlp which handles authentication.
-func (p *Pipeline) BuildCommand(ctx context.Context) (*exec.Cmd, error) {
-	return p.buildFfmpegCmd(ctx, false), nil
-}
+// BuildCommand constructs an FFmpeg command that reads the stream URLs
+// resolved earlier by yt-dlp (Source.GetStream) and pushes to the RTMP
+// target. FFmpeg connects to the CDN directly; yt-dlp is not in the
+// download path.
+func (p *Pipeline) BuildCommand(ctx context.Context) *exec.Cmd {
+	args := []string{"-y", "-nostdin"}
 
-// buildFfmpegCmd constructs the ffmpeg command. When pipeMode is true,
-// ffmpeg reads from stdin (pipe:0) instead of URLs.
-func (p *Pipeline) buildFfmpegCmd(ctx context.Context, pipeMode bool) *exec.Cmd {
-	args := []string{"-re", "-y"}
-
-	if pipeMode {
-		args = append(args, "-i", "pipe:0")
-	} else {
-		multiInput := len(p.streamInfo.URLs) >= 2
-		for i, u := range p.streamInfo.URLs {
-			if i >= 2 {
-				break
-			}
-			args = append(args, "-i", u)
-		}
-		if multiInput {
-			args = append(args, "-map", "0:v", "-map", "1:a")
-		}
+	urls := p.streamInfo.URLs
+	if len(urls) > 2 {
+		urls = urls[:2]
+	}
+	for _, u := range urls {
+		args = append(args, hlsPullFlags...)
+		args = append(args, "-i", u)
+	}
+	if len(urls) >= 2 {
+		args = append(args, "-map", "0:v", "-map", "1:a")
 	}
 
 	mode := p.ffCfg.Transcode
-	needsTranscode := mode == "force"
-	if mode == "auto" {
-		needsTranscode = NeedsTranscode(p.streamInfo)
+
+	videoTranscode := false
+	audioTranscode := false
+	switch mode {
+	case string(TranscodeForce):
+		// Force re-encodes both streams regardless of source codecs.
+		videoTranscode = true
+		audioTranscode = true
+	case string(TranscodeAuto):
+		videoTranscode = needsVideoTranscode(p.streamInfo)
+		audioTranscode = needsAudioTranscode(p.streamInfo)
 	}
 
-	if needsTranscode {
-		args = append(args, "-c:v", p.ffCfg.VideoEncoder)
-		if p.ffCfg.Preset != "" {
-			args = append(args, "-preset", p.ffCfg.Preset)
+	if videoTranscode || audioTranscode {
+		// Transcode each stream independently so a compatible stream is
+		// copied instead of being needlessly re-encoded 24/7.
+		if videoTranscode {
+			args = append(args, "-c:v", p.ffCfg.VideoEncoder)
+			// Limit encoder threads to cap memory usage; ffmpeg defaults to one
+			// thread per core, each with its own lookahead/frame buffers.
+			if p.ffCfg.Threads > 0 {
+				args = append(args, "-threads", fmt.Sprintf("%d", p.ffCfg.Threads))
+			}
+			if p.ffCfg.Preset != "" {
+				args = append(args, "-preset", p.ffCfg.Preset)
+			}
+			if p.ffCfg.CRF > 0 {
+				args = append(args, "-crf", fmt.Sprintf("%d", p.ffCfg.CRF))
+			}
+			if p.ffCfg.Scale != "" {
+				args = append(args, "-vf", fmt.Sprintf("scale=%s", p.ffCfg.Scale))
+			}
+			// Cap the uplink bitrate for weak connections. Only affects the
+			// re-encoded video; bufsize mirrors maxrate (1:1) as a simple default.
+			if p.ffCfg.Maxrate != "" {
+				args = append(args, "-maxrate", p.ffCfg.Maxrate, "-bufsize", p.ffCfg.Maxrate)
+			}
+			// Live-encoding flags: low latency, FLV-safe pixel format, and a
+			// keyframe cadence (GOP) of 2x the source FPS.
+			gop := 60
+			if p.streamInfo.FPS > 0 {
+				gop = int(2 * p.streamInfo.FPS)
+			}
+			args = append(args,
+				"-tune", "zerolatency",
+				"-sc_threshold", "0",
+				"-pix_fmt", "yuv420p",
+				"-g", fmt.Sprintf("%d", gop),
+			)
+		} else {
+			args = append(args, "-c:v", "copy")
 		}
-		if p.ffCfg.CRF > 0 {
-			args = append(args, "-crf", fmt.Sprintf("%d", p.ffCfg.CRF))
-		}
-		if p.ffCfg.Scale != "" {
-			args = append(args, "-vf", fmt.Sprintf("scale=%s", p.ffCfg.Scale))
-		}
-		args = append(args, "-c:a", p.ffCfg.AudioEncoder)
-		if p.ffCfg.AudioBitrate != "" {
-			args = append(args, "-b:a", p.ffCfg.AudioBitrate)
+
+		if audioTranscode {
+			args = append(args, "-c:a", p.ffCfg.AudioEncoder)
+			if p.ffCfg.AudioBitrate != "" {
+				args = append(args, "-b:a", p.ffCfg.AudioBitrate)
+			}
+		} else {
+			args = append(args, "-c:a", "copy")
 		}
 	} else {
 		args = append(args, "-c", "copy")
@@ -123,19 +149,25 @@ func (p *Pipeline) buildFfmpegCmd(ctx context.Context, pipeMode bool) *exec.Cmd 
 // without re-encoding. FLV container supports H.264 video and AAC audio.
 var passThroughCodecs = map[string]struct{}{
 	"h264": {},
-	"avc":  {}, // shorthand for H.264 AVC
 	"aac":  {},
 }
 
-// NeedsTranscode returns true when source codecs are known and incompatible
-// with FLV passthrough. Unknown codecs (empty field) default to copy as a
-// safe fallback.
-func NeedsTranscode(info *source.StreamInfo) bool {
+// needsVideoTranscode reports whether the source video codec must be
+// re-encoded for FLV passthrough. Unknown codecs (empty field) default to
+// copy as a safe fallback.
+func needsVideoTranscode(info *source.StreamInfo) bool {
 	if info.VideoCodec != "" {
 		if _, ok := passThroughCodecs[info.VideoCodec]; !ok {
 			return true
 		}
 	}
+	return false
+}
+
+// needsAudioTranscode reports whether the source audio codec must be
+// re-encoded for FLV passthrough. Unknown codecs (empty field) default to
+// copy as a safe fallback.
+func needsAudioTranscode(info *source.StreamInfo) bool {
 	if info.AudioCodec != "" {
 		if _, ok := passThroughCodecs[info.AudioCodec]; !ok {
 			return true

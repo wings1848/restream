@@ -5,7 +5,6 @@ package source
 
 import (
 	"context"
-	"os/exec"
 )
 
 // StreamInfo holds metadata and access URLs for a detected live stream.
@@ -14,7 +13,7 @@ type StreamInfo struct {
 	// for platforms that provide separate video/audio streams, both are listed.
 	URLs []string
 
-	// Codec information, populated when ProbeFormat succeeds.
+	// Codec information, populated by GetStream from the resolved metadata.
 	VideoCodec string // e.g. "h264", "av1", "vp9"
 	AudioCodec string // e.g. "aac", "opus", "vorbis"
 	Container  string // e.g. "hls", "dash", "rtmp", "m3u8"
@@ -31,21 +30,12 @@ type Source interface {
 	Name() string
 
 	// GetStream resolves the given URL to a StreamInfo with all stream
-	// access URLs and metadata needed by FFmpeg.
+	// access URLs and metadata (including codecs) needed by FFmpeg.
 	GetStream(ctx context.Context, url string) (*StreamInfo, error)
 
 	// ValidateURL checks whether the provided URL is a valid live-stream
 	// URL for this platform. Returns nil if valid, an error otherwise.
 	ValidateURL(url string) error
-
-	// ProbeFormat probes the stream to determine its codec and container
-	// format. Returns nil if probing is not supported for this source.
-	ProbeFormat(ctx context.Context, url string) (*StreamInfo, error)
-
-	// BuildStreamCmd builds a command that downloads the live stream to
-	// stdout. This handles all authentication (cookies, proxy, tokens)
-	// so FFmpeg can read from stdin without worrying about auth.
-	BuildStreamCmd(ctx context.Context, url, format string) *exec.Cmd
 }
 
 // Factory is a constructor that takes a flat string→string config map and

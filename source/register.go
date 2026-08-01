@@ -30,14 +30,3 @@ func New(name string, config map[string]string) (Source, error) {
 	}
 	return factory(config)
 }
-
-// Names returns the list of all registered source names.
-func Names() []string {
-	mu.RLock()
-	defer mu.RUnlock()
-	names := make([]string, 0, len(registry))
-	for n := range registry {
-		names = append(names, n)
-	}
-	return names
-}

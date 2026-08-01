@@ -6,8 +6,13 @@
 global:
   # Log level: debug | info | warn | error
   log_level: info
-  # How often (in seconds) to check stream health
+  # Stall-detection timeout (seconds): if FFmpeg reports no progress for this
+  # long, the stream is considered stalled and restream reconnects.
+  # This is the actual stall timeout, not a poll interval. Sane range: 3-60.
   health_check_interval: 10
+  # /healthz status endpoint listen address (JSON: per-pipeline state, uptime,
+  # last error, ffmpeg bitrate/fps, stderr tail). Empty string disables it.
+  http_addr: ":8080"
 
 pipelines:
   - name: "youtube-to-bilibili"
@@ -18,21 +23,19 @@ pipelines:
       config:
         # YouTube live stream URL (required)
         url: "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"
-        # --- Authentication (choose one) ---
-        # Option A (recommended): PO Token Provider sidecar — auto, no config needed.
+        # --- Authentication ---
+        # PO Token Provider sidecar — auto, no config needed.
         #   docker-compose.yml already includes the pot-provider service.
-        #   yt-dlp auto-discovers it. Leave the fields below empty.
-        #
-        # Option B (fallback): Firefox cookies. Chrome cookies are DEAD since Chrome 127.
-        #   yt-dlp --cookies-from-browser firefox (on host) or mount cookies.txt.
-        cookies_file: ""
-        #
-        # Option C: Manual poToken + visitor_data (extract from browser DevTools).
-        po_token: ""
-        visitor_data: ""
+        #   yt-dlp "auto-discovers" it ONLY if the provider is reachable at
+        #   127.0.0.1:4416. Both compose services use network_mode: host so the
+        #   provider binds the host's 127.0.0.1:4416. If you run restream
+        #   outside Docker, make sure the provider listens on the same host.
         # --- Stream options ---
-        # yt-dlp format selector (optional, defaults to "best")
-        # Examples: "bestvideo+bestaudio", "best[height<=1080]"
+        # yt-dlp format selector (optional, defaults to "best").
+        # For LIVE streams "best" (single merged HLS) is the reliable default;
+        # "bestvideo+bestaudio" is VOD-oriented and usually unavailable on live
+        # (yt-dlp will error). Use it only if you truly need separate tracks.
+        # Examples: "best", "best[height<=1080]"
         format: ""
         # HTTP/SOCKS proxy (optional). Use if YouTube is blocked.
         # TUN mode (VPN) is preferred — no proxy config needed.
@@ -48,6 +51,10 @@ pipelines:
         # RTMP ingest URL (optional; uses Bilibili default if empty)
         rtmp_url: "rtmp://live-push.bilivideo.com/live-bvc/"
         # Stream key / code (required). Supports env var expansion.
+        # Bilibili gives a full rtmp URL like
+        #   rtmp://live-push.bilivideo.com/live-bvc/?streamname=...&key=...&pflag=2
+        # Put ONLY the "?streamname=..." part here; put the address up to
+        # "live-bvc/" in rtmp_url above.
         stream_key: "${BILIBILI_STREAM_KEY}"
 
     # --- FFmpeg transcode settings ---
@@ -70,6 +77,13 @@ pipelines:
       # Resolution scaling (optional, used when transcoding). Empty = no scaling.
       # Examples: "-1:720" for 720p with proportional width, "1280:720" for exact
       # scale: ""
+      # Encoder threads: 0 = ffmpeg default (one per CPU core, highest memory).
+      # Limit to cap transcode memory, e.g. 2 = ~200MB for 1080p x264.
+      threads: 0
+      # Uplink video bitrate cap (weak uplinks): e.g. "6M" adds
+      # -maxrate 6M -bufsize 6M. Only affects re-encoded (transcoded) video;
+      # copy mode forwards the source bitrate unchanged. Empty = no cap.
+      maxrate: ""
 
     # --- Auto-reconnect / retry settings ---
     retry:

@@ -5,26 +5,44 @@ services:
     image: brainicism/bgutil-ytdlp-pot-provider:latest
     restart: unless-stopped
     init: true
+    # Host network is REQUIRED: the restream container's yt-dlp plugin connects
+    # to the provider at 127.0.0.1:4416. On the default bridge network,
+    # 127.0.0.1 would be the container itself and PO-token auth silently fails.
+    network_mode: host
     environment:
       TOKEN_TTL: 6  # hours, default 6h
+    healthcheck:
+      # Image is a Debian Node app (no curl/wget); node's built-in fetch works.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4416/ping').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   restream:
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Host network: matches the verified-working setup (see test-setup.sh).
+    # Shares the host's network stack so yt-dlp reaches the pot-provider at
+    # 127.0.0.1:4416 and the RTMP push also goes out directly.
+    network_mode: host
+    # Optional resource ceilings for the transcode path (uncomment to apply):
+    # mem_limit: 1g
+    # cpus: "2.0"
     depends_on:
-      - pot-provider
+      pot-provider:
+        condition: service_healthy
     environment:
       - BILIBILI_STREAM_KEY=${BILIBILI_STREAM_KEY}
-      # Optional HTTP proxy for YouTube access (if outside VPN/TUN)
-      # - http_proxy=http://host.docker.internal:7897
-      # - https_proxy=http://host.docker.internal:7897
+      # Optional HTTP proxy for YouTube access (if outside VPN/TUN).
+      # Host network uses the host's network stack, so proxy to 127.0.0.1
+      # (host.docker.internal does NOT exist on host networking).
+      # - http_proxy=http://127.0.0.1:7897
+      # - https_proxy=http://127.0.0.1:7897
     volumes:
       - ./config.yaml:/etc/restream/config.yaml:ro
-      # Optional: Firefox cookies for auth fallback.
-      # Firefox is the only browser whose cookies yt-dlp can still read in 2026.
-      # - ./cookies.txt:/cookies.txt:ro
     command:
       - "--config"
       - "/etc/restream/config.yaml"

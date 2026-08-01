@@ -7,6 +7,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,8 +21,11 @@ type Config struct {
 
 // GlobalConfig holds process-wide settings.
 type GlobalConfig struct {
-	LogLevel             string `yaml:"log_level"`
-	HealthCheckInterval  int    `yaml:"health_check_interval"`
+	LogLevel            string `yaml:"log_level"`
+	HealthCheckInterval int    `yaml:"health_check_interval"`
+	// HttpAddr is the listen address for the /healthz status endpoint
+	// (e.g. ":8080"). Empty disables the endpoint.
+	HttpAddr string `yaml:"http_addr"`
 }
 
 // Pipeline describes a single source→sink restream pipeline.
@@ -53,13 +58,15 @@ type FFmpegConfig struct {
 	AudioEncoder string `yaml:"audio_encoder"` // aac, libmp3lame, ...
 	AudioBitrate string `yaml:"audio_bitrate"` // 128k, 192k, ...
 	Scale        string `yaml:"scale"`         // resolution scaling (e.g. "-1:720"), empty = no scale
+	Threads      int    `yaml:"threads"`       // encoder threads; 0 = ffmpeg default (all cores)
+	Maxrate      string `yaml:"maxrate"`       // uplink video bitrate cap for transcodes (e.g. "6M"), empty = unlimited
 }
 
 // RetryConfig controls exponential-backoff reconnection.
 type RetryConfig struct {
-	MaxRetries       int     `yaml:"max_retries"`       // 0 = unlimited
-	InitialInterval  int     `yaml:"initial_interval"`  // seconds
-	MaxInterval      int     `yaml:"max_interval"`       // seconds
+	MaxRetries        int     `yaml:"max_retries"`      // 0 = unlimited
+	InitialInterval   int     `yaml:"initial_interval"` // seconds
+	MaxInterval       int     `yaml:"max_interval"`     // seconds
 	BackoffMultiplier float64 `yaml:"backoff_multiplier"`
 }
 
@@ -69,6 +76,7 @@ func DefaultConfig() Config {
 		Global: GlobalConfig{
 			LogLevel:            "info",
 			HealthCheckInterval: 10,
+			HttpAddr:            ":8080",
 		},
 	}
 }
@@ -90,6 +98,31 @@ func expandConfig(m map[string]string) {
 	for k, v := range m {
 		m[k] = expandEnv(v)
 	}
+}
+
+// unresolvedEnvRe matches the ${VAR} braces form of os.Expand placeholders.
+// This is the user-facing contract for environment substitution; a bare $VAR
+// left over is suspicious but deliberately not flagged here.
+var unresolvedEnvRe = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+// checkUnresolvedEnv returns an error if any value in the config map still
+// contains a ${VAR} placeholder after expansion — meaning the referenced
+// environment variable was not set. which is "source" or "sink".
+func checkUnresolvedEnv(i int, which string, m map[string]string) error {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if match := unresolvedEnvRe.FindString(m[k]); match != "" {
+			return fmt.Errorf("pipeline[%d]: unresolved environment variable %s in %s.config.%s", i, match, which, k)
+		}
+	}
+	return nil
 }
 
 // Load reads a YAML config file at path, expands environment variables,
@@ -114,6 +147,13 @@ func Parse(data []byte) (*Config, error) {
 		expandConfig(cfg.Pipelines[i].Source.Config)
 		expandConfig(cfg.Pipelines[i].Sink.Config)
 		cfg.Pipelines[i].applyDefaults()
+
+		if err := checkUnresolvedEnv(i, "source", cfg.Pipelines[i].Source.Config); err != nil {
+			return nil, err
+		}
+		if err := checkUnresolvedEnv(i, "sink", cfg.Pipelines[i].Sink.Config); err != nil {
+			return nil, err
+		}
 	}
 
 	return &cfg, nil
@@ -180,6 +220,9 @@ func (c *Config) Validate() error {
 	if len(c.Pipelines) == 0 {
 		return fmt.Errorf("at least one pipeline must be defined")
 	}
+	if c.Global.HealthCheckInterval < 3 {
+		return fmt.Errorf("global.health_check_interval must be >= 3, got %d", c.Global.HealthCheckInterval)
+	}
 	for i, p := range c.Pipelines {
 		if p.Name == "" {
 			return fmt.Errorf("pipeline[%d]: name is required", i)
@@ -198,6 +241,15 @@ func (c *Config) Validate() error {
 		}
 		if t := p.FFmpeg.Transcode; t != "auto" && t != "copy" && t != "force" {
 			return fmt.Errorf("pipeline[%d] (%s): ffmpeg.transcode must be auto|copy|force, got %q", i, p.Name, t)
+		}
+		if p.Retry.InitialInterval < 1 {
+			return fmt.Errorf("pipeline[%d] (%s): retry.initial_interval must be >= 1, got %d", i, p.Name, p.Retry.InitialInterval)
+		}
+		if p.Retry.MaxInterval < 1 {
+			return fmt.Errorf("pipeline[%d] (%s): retry.max_interval must be >= 1, got %d", i, p.Name, p.Retry.MaxInterval)
+		}
+		if p.Retry.BackoffMultiplier <= 0 {
+			return fmt.Errorf("pipeline[%d] (%s): retry.backoff_multiplier must be > 0, got %g", i, p.Name, p.Retry.BackoffMultiplier)
 		}
 	}
 	return nil
@@ -260,5 +312,3 @@ func LoadWithFlags(flags *CLIFlags) (*Config, error) {
 
 	return cfg, nil
 }
-
-
