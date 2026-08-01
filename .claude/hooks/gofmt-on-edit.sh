@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # PostToolUse hook (restream project): gofmt -w any edited .go files.
-files=$(echo "${CLAUDE_FILE_PATHS_ABSOLUTE:-}" | tr ' ' '\n' | grep '\.go$')
-if [ -z "$files" ]; then
-  exit 0
-fi
-command -v gofmt >/dev/null 2>&1 || exit 0
-for f in $files; do
-  gofmt -w "$f"
-done
+# The edited file path comes from stdin JSON (tool_input.file_path) — the
+# CLAUDE_FILE_PATHS_ABSOLUTE env var is NOT injected in this CC version.
+input=$(cat)
+file=$(python3 -c 'import json,sys
+print(json.load(sys.stdin).get("tool_input", {}).get("file_path", ""))' <<<"$input")
+[ -n "$file" ] || exit 0
+case "$file" in
+  *.go)
+    command -v gofmt >/dev/null 2>&1 || exit 0
+    gofmt -w "$file"
+    ;;
+esac
 exit 0
