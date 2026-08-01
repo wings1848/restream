@@ -50,6 +50,12 @@ services:
       # - https_proxy=http://127.0.0.1:7897
     volumes:
       - ./config.yaml:/etc/restream/config.yaml:ro
+      # Optional: signed stream URL for the "direct" source type
+      # (source.config.url_file). An external refresher (scripts/refresh-url.sh)
+      # replaces this file in place; restream re-reads it on every resolve.
+      # Create it before first start (e.g. `touch stream.url`) — a missing
+      # host file would otherwise be bind-mounted as an empty DIRECTORY.
+      - ./stream.url:/etc/restream/stream.url:ro
       # Optional: YouTube cookies for bot-checked / members-only streams
       # (reference it in config.yaml as source.config.cookies). Holds login
       # credentials — keep cookies.txt out of git.
