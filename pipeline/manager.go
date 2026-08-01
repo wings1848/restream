@@ -214,10 +214,10 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		return ctx.Err()
 	case status := <-healthCh:
 		// FFmpeg may have exited on its own at the same moment the checker
-		// reported a stall (stderr EOF). Drain doneCh first so a crash is
-		// reported with its real exit error rather than a spurious health
-		// failure. Only treat the health signal as authoritative when ffmpeg
-		// is still running.
+		// reported a stall (stderr EOF). Give Wait a short window to surface
+		// the real exit error instead of a spurious health failure. Only when
+		// ffmpeg is still running after the window is the health signal
+		// treated as authoritative (genuine stall/error -> kill).
 		select {
 		case err := <-doneCh:
 			if err != nil {
@@ -225,7 +225,7 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 			}
 			l.Info("ffmpeg exited cleanly")
 			return nil
-		default:
+		case <-time.After(300 * time.Millisecond):
 		}
 		l.Warn("health check failed, killing ffmpeg", "status", status.String())
 		ffCmd.Process.Kill()
