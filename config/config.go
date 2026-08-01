@@ -242,7 +242,13 @@ func (c *Config) Validate() error {
 		if p.Sink.Type == "" {
 			return fmt.Errorf("pipeline[%d] (%s): sink.type is required", i, p.Name)
 		}
-		if p.Source.Config == nil || p.Source.Config["url"] == "" {
+		// Most sources require a stream URL; the "direct" source accepts
+		// url_file (a file holding a pre-resolved URL, refreshed in place).
+		if p.Source.Type == "direct" {
+			if p.Source.Config == nil || (p.Source.Config["url"] == "" && p.Source.Config["url_file"] == "") {
+				return fmt.Errorf("pipeline[%d] (%s): source.config.url or source.config.url_file is required", i, p.Name)
+			}
+		} else if p.Source.Config == nil || p.Source.Config["url"] == "" {
 			return fmt.Errorf("pipeline[%d] (%s): source.config.url is required", i, p.Name)
 		}
 		if p.Sink.Config == nil || p.Sink.Config["stream_key"] == "" {

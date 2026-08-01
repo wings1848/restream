@@ -15,37 +15,22 @@ COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o restream .
 
 # =============================================================================
-# Stage 2: Download static ffmpeg (~15MB, no runtime library dependencies)
-# https://johnvansickle.com/ffmpeg/ — musl static build with x264/aac/flv/rtmp
-# =============================================================================
-FROM alpine:3.22 AS ffmpeg-dl
-
-ARG FFMPEG_ARCH=amd64
-
-# johnvansickle.com is unreliable: downloads occasionally truncate
-# (curl -f alone won't detect that, tar will). Retry with integrity
-# verification so a transient network hiccup doesn't fail the whole build.
-RUN apk add --no-cache curl xz \
-    && for i in 1 2 3 4 5; do \
-         curl -fsSL --retry 3 --retry-all-errors -o /tmp/ffmpeg.tar.xz \
-           "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${FFMPEG_ARCH}-static.tar.xz" \
-         && tar -tJf /tmp/ffmpeg.tar.xz >/dev/null 2>&1 && break \
-         || { echo "ffmpeg download attempt $i failed, retrying"; sleep 5; }; \
-       done \
-    && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
-    && mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/
-
-# =============================================================================
 # Stage 3: Minimal runtime image
 # =============================================================================
 FROM alpine:3.22
 
+# ffmpeg comes from Alpine's own (musl) package, NOT a glibc static build:
+# johnvansickle's static ffmpeg can't resolve hostnames inside an alpine
+# container — its embedded glibc NSS has no DNS backend there, so
+# getaddrinfo fails with EAI_SYSTEM ("Failed to resolve hostname") on every
+# connection, even though curl/wget in the same container work fine.
 RUN apk add --no-cache \
     python3 \
     py3-pip \
     nodejs \
     ca-certificates \
     tzdata \
+    ffmpeg \
     && pip3 install --break-system-packages --no-cache-dir -U \
         "yt-dlp[default]" bgutil-ytdlp-pot-provider \
     && rm -rf /usr/lib/python3.12/test /usr/lib/python3.12/idlelib \
@@ -61,7 +46,6 @@ RUN apk add --no-cache \
 # resolve returns "No video formats found" even with a valid JS runtime.
 
 COPY --from=builder /app/restream /usr/local/bin/restream
-COPY --from=ffmpeg-dl /usr/local/bin/ffmpeg /usr/local/bin/
 
 ENTRYPOINT ["restream"]
 CMD ["--help"]

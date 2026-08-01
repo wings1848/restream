@@ -193,6 +193,25 @@ func TestValidateRejectsMissingURL(t *testing.T) {
 	}
 }
 
+func TestValidateDirectAcceptsURLFile(t *testing.T) {
+	cfg := validConfig()
+	cfg.Pipelines[0].Source.Type = "direct"
+	cfg.Pipelines[0].Source.Config = map[string]string{"url_file": "/etc/restream/stream.url"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want nil for url_file-only direct source", err)
+	}
+}
+
+func TestValidateDirectRejectsNoURL(t *testing.T) {
+	cfg := validConfig()
+	cfg.Pipelines[0].Source.Type = "direct"
+	cfg.Pipelines[0].Source.Config = map[string]string{}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "source.config.url or source.config.url_file is required") {
+		t.Fatalf("Validate() error = %v, want url/url_file required error", err)
+	}
+}
+
 func TestValidateRejectsInvalidTranscode(t *testing.T) {
 	cfg := validConfig()
 	cfg.Pipelines[0].FFmpeg.Transcode = "h265"
