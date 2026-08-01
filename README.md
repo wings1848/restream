@@ -21,7 +21,20 @@ A lightweight, unattended live-stream **mirror / relay**: it pulls a YouTube liv
 - **Multi-pipeline** — run several relays in one process, independently.
 - **Docker multi-stage image** — minimal Alpine runtime with static FFmpeg and a current `yt-dlp` bundled.
 
-## Quick start
+## 🚀 Deploy with an AI agent (recommended)
+
+Fastest setup — hand this repo to an AI coding assistant (e.g. Claude Code) and it deploys restream for you: asks for the deploy mode, splits your Bilibili URL, starts the relay, and verifies via `/healthz`. Copy-paste and fill in your values:
+
+```text
+Deploy restream with docker compose.
+YouTube live: <your YouTube live URL>
+Bilibili push: <full rtmp://...?streamname=..&key=..&pflag=2 from dashboard>
+Transcode: auto
+```
+
+The assistant uses the bundled [`restream-deploy` skill](skills/restream-deploy-SKILL.md).
+
+## Quick start (manual)
 
 ### 1. CLI (single pipeline, no config file)
 
@@ -34,7 +47,7 @@ go build -o restream .
 
 Other flags: `--config <path>`, `--log-level debug|info|warn|error`, `--version`.
 
-### 2. Docker Compose (recommended)
+### 2. Docker Compose
 
 ```bash
 cp config.yaml.example config.yaml        # edit your config
@@ -44,16 +57,6 @@ docker compose logs -f
 ```
 
 See [docs/deployment.md](docs/deployment.md) for all three ways to run, plus the required **PO Token Provider sidecar** for YouTube.
-
-## Deploy with an AI agent
-
-The repo ships a **`restream-deploy` skill** ([`skills/restream-deploy-SKILL.md`](skills/restream-deploy-SKILL.md)) that lets an AI coding assistant (e.g. Claude Code) deploy and operate restream for you. When you ask the assistant to set up restream, it will:
-
-1. Ask how you want to deploy — **Docker Compose** or a **binary**;
-2. Ask for the required inputs — the YouTube live URL and the Bilibili push address (it will help you split the full `rtmp://…?streamname=…` string into `rtmp_url` + `stream_key`);
-3. Set up the config, start the relay, and verify it via `/healthz`.
-
-> Example prompt: *"部署 restream，用 docker compose，YouTube 是 `https://www.youtube.com/live/xxx`，Bilibili 推流地址是 `rtmp://live-push.bilivideo.com/live-bvc/?streamname=…`"*
 
 ## Documentation
 

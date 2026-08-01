@@ -21,7 +21,20 @@ restream 是一个轻量级的直播流转发工具：通过 `yt-dlp` 拉取 You
 - **多管道并行** — 一个进程内同时运行多条独立管道
 - **Docker 镜像** — 多阶段构建，内置静态 FFmpeg 与最新 yt-dlp
 
-## 快速开始
+## 🚀 使用 AI 助手部署（推荐）
+
+最快的方式：把本仓库交给 AI 编码助手（如 Claude Code），它会替你完成部署——询问部署方式、帮你拆分 Bilibili 推流地址、配置、启动并通过 `/healthz` 验证。复制下面内容、填入你的信息即可：
+
+```text
+部署 restream，用 docker compose。
+YouTube 直播：<你的 YouTube 直播 URL>
+Bilibili 推流：<后台给的完整 rtmp://...?streamname=..&key=..&pflag=2>
+转码：auto
+```
+
+AI 会使用仓库内置的 [`restream-deploy` skill](skills/restream-deploy-SKILL.md) 完成部署。
+
+## 快速开始（手动）
 
 ### 方式一：CLI（单管道，无需配置文件）
 
@@ -34,7 +47,7 @@ go build -o restream .
 
 其他参数：`--config <path>`、`--log-level debug|info|warn|error`、`--version`。
 
-### 方式二：Docker Compose（推荐）
+### 方式二：Docker Compose
 
 ```bash
 cp config.yaml.example config.yaml
@@ -44,16 +57,6 @@ docker compose logs -f
 ```
 
 > compose 中的两个服务均使用 `network_mode: host`，以确保 yt-dlp 能访问 `127.0.0.1:4416` 上的 PO Token 服务。
-
-## 使用 AI 助手部署
-
-仓库内置 **`restream-deploy` skill**（[`skills/restream-deploy-SKILL.md`](skills/restream-deploy-SKILL.md)），可让 AI 编码助手（如 Claude Code）帮你快速部署与运维 restream。让 AI 部署时，它会：
-
-1. 先询问部署方式 —— **Docker Compose** 或 **二进制**；
-2. 再询问必要参数 —— YouTube 直播 URL 与 Bilibili 推流地址（它会帮你把整条 `rtmp://…?streamname=…` 拆成 `rtmp_url` + `stream_key`）；
-3. 完成配置、启动、并通过 `/healthz` 验证。
-
-> 示例提问：*"部署 restream，用 docker compose，YouTube 是 `https://www.youtube.com/live/xxx`，Bilibili 推流地址是 `rtmp://live-push.bilivideo.com/live-bvc/?streamname=…`"*
 
 ## Bilibili 推流密钥拆分
 
