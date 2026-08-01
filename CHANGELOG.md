@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-01
+
+### Added
+
+- New `direct` source type: feed a pre-resolved signed stream URL straight to
+  FFmpeg, skipping yt-dlp entirely. Solves running restream from datacenter
+  IPs that YouTube bot-checks at resolution time: the signed manifest URLs
+  are fetchable from any IP, so resolve on a trusted (residential) machine
+  and stream from the datacenter box. Supports a static `url` or a `url_file`
+  that is re-read on every resolve, so an external refresher can rotate the
+  URL without restarting.
+- `scripts/refresh-url.sh`: resolves a YouTube live stream on the local
+  machine (via proxy + PO token) and atomically pushes the signed HLS URL to
+  the server. Intended to run from cron/systemd every ~3h (URLs live ~6h).
+- Docs: `direct` source fields in `docs/configuration.md`, split
+  resolve/stream deployment pattern in `docs/deployment.md`, commented
+  example in `config.yaml.example`.
+
+### Fixed
+
+- `main.go` version constant now tracks releases (was stuck at v0.1.0).
+
+[0.2.0]: https://github.com/wings1848/restream/releases/tag/v0.2.0
+
 ## [0.1.1] - 2026-08-01
 
 ### Changed

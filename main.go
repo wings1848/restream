@@ -21,11 +21,12 @@ import (
 
 	// Import source/sink implementations so their init() registers them.
 	_ "github.com/wings1848/restream/sink/bilibili"
+	_ "github.com/wings1848/restream/source/direct"
 	_ "github.com/wings1848/restream/source/youtube"
 )
 
 // version is the restream release version printed by --version.
-const version = "v0.1.0"
+const version = "v0.2.0"
 
 func main() {
 	// Parse CLI flags.

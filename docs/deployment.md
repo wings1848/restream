@@ -102,6 +102,30 @@ Both compose files run **both** services with `network_mode: host`:
 
 The compose file passes `BILIBILI_STREAM_KEY=${BILIBILI_STREAM_KEY}` through from the shell. Any config value can reference `${VAR}`; an unresolved `${VAR}` is a load-time error.
 
+## Datacenter IPs and YouTube's bot check
+
+YouTube bot-checks **resolution** (the player page) but not the **signed
+manifest URLs** it produces. A machine on a residential IP can resolve a
+signed HLS URL that any other IP — including a datacenter IP that would fail
+its own resolution with "Sign in to confirm you're not a bot" — can then
+fetch. PO tokens and fresh cookies do **not** fix a bot-checked datacenter
+IP; the check is tied to the resolving IP's reputation.
+
+If your server runs on a datacenter IP, split the roles with the `direct`
+source:
+
+1. On a trusted (residential) machine, resolve the stream periodically:
+   `yt-dlp -g "<youtube url>"` (with your proxy/PO-token setup) → signed HLS URL.
+2. Push that URL to a file on the server (e.g. via `scp`/`ssh` from a cron job).
+3. Configure the server pipeline with `source.type: direct` and
+   `source.config.url_file` pointing at that file; restream re-reads it on
+   every resolve, so the URL is refreshed automatically on the next reconnect.
+
+Signed URLs expire after ~6 hours; refresh the file at least every 3 hours.
+Auto mode defaults unknown codecs to stream copy, which fits the typical
+H.264/AAC HLS output — set `ffmpeg.transcode: force` if the source isn't
+FLV-compatible.
+
 ## Building the binary
 
 ```bash

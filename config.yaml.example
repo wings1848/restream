@@ -50,6 +50,19 @@ pipelines:
         # confirm you're not a bot" check or members-only content. This file
         # holds login credentials — never commit it to the repo.
         cookies: ""
+        # --- Alternative: "direct" source (pre-resolved URL, no yt-dlp) ---
+        # Feed a signed stream URL straight to FFmpeg, skipping resolution.
+        # Use when the machine running restream CANNOT resolve but CAN fetch:
+        # e.g. a datacenter IP blocked by YouTube's bot check will still serve
+        # signed HLS URLs. Resolve on a trusted machine and push the URL here.
+        #   url:      "<signed HLS URL>"   static URL
+        #   url_file: "/path/stream.url"   re-read on every resolve; rotate the
+        #                                  file in place to refresh the URL
+        # Codecs are unknown, so auto mode defaults to stream copy (fine for
+        # H.264/AAC HLS); set ffmpeg.transcode=force for other codecs.
+        # type: direct
+        # config:
+        #   url_file: "/etc/restream/stream.url"
 
     # --- Sink (destination) settings ---
     sink:

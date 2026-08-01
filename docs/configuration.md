@@ -58,6 +58,9 @@ You can add more entries under `pipelines:` — each pipeline runs concurrently 
 | `source.config.proxy` | `""` | HTTP/SOCKS proxy, e.g. `socks5://127.0.0.1:1080`. TUN mode (VPN) is preferred — no proxy config needed. |
 | `source.config.force_ipv4` | `false` | Always force IPv4 for resolve. Usually unnecessary: if the default resolve fails (e.g. a broken IPv6 path), restream automatically retries once with IPv4. Set `true` only where IPv4 must always be used (e.g. a proxy that only supports IPv4). |
 | `source.config.cookies` | `""` | Path to a Netscape-format `cookies.txt`, passed to yt-dlp via `--cookies`. Required for streams behind YouTube's "Sign in to confirm you're not a bot" check or members-only content. Holds login credentials — never commit it. |
+| `source.type` `direct` | — | **Alternative source: pre-resolved URL, no yt-dlp.** Feed a signed stream URL straight to FFmpeg. Use when the machine running restream cannot resolve (e.g. a datacenter IP blocked by YouTube's bot check) but can still fetch signed manifest URLs. Resolve on a trusted machine and push the URL here. |
+| `source.config.url` (direct) | — | Static signed stream URL. |
+| `source.config.url_file` (direct) | — | Path to a file holding the stream URL (trailing newline OK). **Re-read on every resolve**, so an external refresher can rotate the URL in place — the next reconnect picks it up. Missing file is an error (pipeline retries until the file appears). |
 | `sink.type` | — | Registered sink name, e.g. `bilibili`. |
 | `sink.config.rtmp_url` | `rtmp://live-push.bilivideo.com/live-bvc/` | RTMP ingest URL, up to `live-bvc/` (see key split below). |
 | `sink.config.stream_key` | — | Stream key / code (**required**). Supports `${BILIBILI_STREAM_KEY}`. |
