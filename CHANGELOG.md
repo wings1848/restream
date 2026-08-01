@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ffmpeg.threads` now defaults to `2` (≈ 256 MiB transcode memory) instead of
+  ffmpeg's all-cores default. It is a pointer field: omit it for the default,
+  or set `0` to request ffmpeg's own default (one thread per CPU core).
+- `ffmpeg.maxrate` now defaults to `"8M"` (near Bilibili's 8000 kbps upload
+  cap) instead of unlimited. Only affects transcoded video; `copy` mode
+  forwards the source bitrate unchanged.
 - Stream resolution simplified into a single yt-dlp info-dict call that
   returns both the FFmpeg input URLs and the codec metadata.
 - Auto-transcode now uses normalized codec identifiers (`avc1.…` → `h264`,

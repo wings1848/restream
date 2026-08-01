@@ -32,8 +32,8 @@ pipelines:
       scale: ""                # e.g. "-1:720" (transcode only)
       audio_encoder: aac
       audio_bitrate: 128k
-      threads: 0               # 0 = FFmpeg default (one per core)
-      maxrate: ""              # uplink cap, e.g. "6M" (transcode only)
+      threads: 2               # default 2; 0 = FFmpeg default (one per core)
+      maxrate: "8M"            # uplink cap (transcode only), default 8M
     retry:
       max_retries: 0           # 0 = retry forever
       initial_interval: 5      # first retry delay (seconds)
@@ -66,8 +66,8 @@ You can add more entries under `pipelines:` — each pipeline runs concurrently 
 | `ffmpeg.scale` | `""` | Resolution scaling (transcode only). Examples: `-1:720` (720p, proportional width), `1280:720` (exact). Empty = no scaling. |
 | `ffmpeg.audio_encoder` | `aac` | Audio encoder: `aac` \| `libmp3lame` \| `libopus` \| `copy`. |
 | `ffmpeg.audio_bitrate` | `128k` | Audio bitrate, e.g. `64k` \| `128k` \| `192k` \| `256k` \| `320k`. |
-| `ffmpeg.threads` | `0` | Encoder threads. `0` = FFmpeg default (one per CPU core, highest memory). Limit to cap transcode memory (e.g. `2` ≈ 256 MiB for 1080p x264). |
-| `ffmpeg.maxrate` | `""` | Uplink video bitrate cap for weak connections, e.g. `6M` (adds `-maxrate 6M -bufsize 6M`). Transcode only — ignored in `copy` mode, which forwards the source bitrate unchanged. |
+| `ffmpeg.threads` | `2` | Encoder threads (≈ 256 MiB transcode memory for 1080p x264). Set `0` to keep FFmpeg's own default (one per CPU core, highest memory). |
+| `ffmpeg.maxrate` | `"8M"` | Uplink video bitrate cap (adds `-maxrate 8M -bufsize 8M`), near Bilibili's 8000 kbps limit. Transcode only — ignored in `copy` mode, which forwards the source bitrate unchanged. |
 | `retry.max_retries` | `0` | Maximum retry attempts; `0` = retry forever. |
 | `retry.initial_interval` | `5` | First retry delay (seconds). |
 | `retry.max_interval` | `60` | Backoff cap (seconds). |

@@ -96,8 +96,8 @@ func (p *Pipeline) BuildCommand(ctx context.Context) *exec.Cmd {
 			args = append(args, "-c:v", p.ffCfg.VideoEncoder)
 			// Limit encoder threads to cap memory usage; ffmpeg defaults to one
 			// thread per core, each with its own lookahead/frame buffers.
-			if p.ffCfg.Threads > 0 {
-				args = append(args, "-threads", fmt.Sprintf("%d", p.ffCfg.Threads))
+			if p.ffCfg.Threads != nil && *p.ffCfg.Threads > 0 {
+				args = append(args, "-threads", fmt.Sprintf("%d", *p.ffCfg.Threads))
 			}
 			if p.ffCfg.Preset != "" {
 				args = append(args, "-preset", p.ffCfg.Preset)

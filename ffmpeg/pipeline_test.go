@@ -100,10 +100,18 @@ func TestBuildCommandForceDefaultGOP(t *testing.T) {
 }
 
 func TestBuildCommandThreads(t *testing.T) {
-	ff := config.FFmpegConfig{VideoEncoder: "libx264", Threads: 2}
+	threads := 2
+	ff := config.FFmpegConfig{VideoEncoder: "libx264", Threads: &threads}
 	args := buildArgs("force", &source.StreamInfo{URLs: []string{"http://u1"}}, ff)
 	if !has(args, "-threads 2") {
 		t.Errorf("threads=2 should pass -threads 2: %v", args)
+	}
+
+	// nil Threads (absent in config) means "default", which must NOT emit -threads.
+	ffNil := config.FFmpegConfig{VideoEncoder: "libx264"}
+	argsNil := buildArgs("force", &source.StreamInfo{URLs: []string{"http://u1"}}, ffNil)
+	if has(argsNil, "-threads") {
+		t.Errorf("nil Threads should not pass -threads: %v", argsNil)
 	}
 }
 

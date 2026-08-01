@@ -60,8 +60,11 @@ func TestParseValidConfig(t *testing.T) {
 	if p.FFmpeg.CRF != 23 {
 		t.Errorf("ffmpeg.crf = %d, want 23 (default)", p.FFmpeg.CRF)
 	}
-	if p.FFmpeg.Threads != 0 {
-		t.Errorf("ffmpeg.threads = %d, want 0 (absent -> ffmpeg default)", p.FFmpeg.Threads)
+	if p.FFmpeg.Threads == nil || *p.FFmpeg.Threads != 2 {
+		t.Errorf("ffmpeg.threads = %v, want 2 (default)", p.FFmpeg.Threads)
+	}
+	if p.FFmpeg.Maxrate != "8M" {
+		t.Errorf("ffmpeg.maxrate = %q, want 8M (default)", p.FFmpeg.Maxrate)
 	}
 
 	// Explicit retry values kept.

@@ -58,8 +58,10 @@ type FFmpegConfig struct {
 	AudioEncoder string `yaml:"audio_encoder"` // aac, libmp3lame, ...
 	AudioBitrate string `yaml:"audio_bitrate"` // 128k, 192k, ...
 	Scale        string `yaml:"scale"`         // resolution scaling (e.g. "-1:720"), empty = no scale
-	Threads      int    `yaml:"threads"`       // encoder threads; 0 = ffmpeg default (all cores)
-	Maxrate      string `yaml:"maxrate"`       // uplink video bitrate cap for transcodes (e.g. "6M"), empty = unlimited
+	// Threads caps encoder threads. nil = default (2). Set 0 to keep ffmpeg's
+	// own default (one per CPU core, highest memory).
+	Threads *int   `yaml:"threads"`
+	Maxrate string `yaml:"maxrate"` // uplink video bitrate cap for transcodes (e.g. "6M"), empty = unlimited
 }
 
 // RetryConfig controls exponential-backoff reconnection.
@@ -178,6 +180,13 @@ func (p *Pipeline) applyDefaults() {
 	}
 	if p.FFmpeg.AudioBitrate == "" {
 		p.FFmpeg.AudioBitrate = "128k"
+	}
+	if p.FFmpeg.Threads == nil {
+		t := 2
+		p.FFmpeg.Threads = &t
+	}
+	if p.FFmpeg.Maxrate == "" {
+		p.FFmpeg.Maxrate = "8M"
 	}
 	if p.Retry.InitialInterval == 0 {
 		p.Retry.InitialInterval = 5
