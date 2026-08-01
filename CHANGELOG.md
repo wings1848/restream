@@ -32,9 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `source.config.cookies` to pass a Netscape-format `cookies.txt` to yt-dlp
   via `--cookies`, required for streams behind YouTube's "Sign in to confirm
   you're not a bot" check or members-only content.
-- Docker image uses **Node.js** as yt-dlp's JS runtime for YouTube n-sig
-  solving (was QuickJS, which cannot execute the 2026 n-sig algorithm and
-  caused "No video formats found").
+- Docker image installs **`yt-dlp[default]`** (so the EJS challenge-solver
+  scripts are present) and uses **Node.js** as yt-dlp's JS runtime
+  (`--js-runtimes node`) for YouTube n-sig solving. A plain `pip install
+  yt-dlp` without `[default]` could not solve the 2026 n-challenge and yielded
+  "No video formats found".
+- `docker-compose.deploy.yml` mounts `cookies.txt` **writable** (no `:ro`):
+  yt-dlp writes merged cookies back on exit, and a read-only mount makes it
+  exit non-zero after a successful resolve.
 - YouTube source support for channel `/live` URLs, proxy support, and yt-dlp
   timeouts.
 - Config validation now rejects unresolved `${ENV}` placeholders and validates

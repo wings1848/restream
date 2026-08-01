@@ -53,7 +53,10 @@ services:
       # Optional: YouTube cookies for bot-checked / members-only streams
       # (reference it in config.yaml as source.config.cookies). Holds login
       # credentials — keep cookies.txt out of git.
-      - ./cookies.txt:/etc/restream/cookies.txt:ro
+      # NOTE: mounted WRITABLE (no :ro). yt-dlp writes merged cookies back on
+      # exit; a read-only mount makes it exit non-zero after a successful
+      # resolve, which restream treats as a failed resolve.
+      - ./cookies.txt:/etc/restream/cookies.txt
     command:
       - "--config"
       - "/etc/restream/config.yaml"

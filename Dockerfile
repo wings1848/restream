@@ -40,17 +40,18 @@ RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     && pip3 install --break-system-packages --no-cache-dir -U \
-        yt-dlp bgutil-ytdlp-pot-provider \
+        "yt-dlp[default]" bgutil-ytdlp-pot-provider \
     && rm -rf /usr/lib/python3.12/test /usr/lib/python3.12/idlelib \
               /usr/lib/python3.12/turtledemo \
     && find /usr/lib/python3.12 -type d -name __pycache__ -prune -exec rm -rf {} + \
     && echo '--js-runtimes node' > /etc/yt-dlp.conf
 
-# Node.js is yt-dlp's JS runtime for YouTube n-sig challenge solving. It is
-# REQUIRED: the 2026 n-sig algorithm exceeds what embedded runtimes like
-# QuickJS can execute, and a failed n-challenge yields "No video formats
-# found". Deno is yt-dlp's default but is ~90MB; node is the smaller
-# supported option and is enabled via /etc/yt-dlp.conf.
+# Node.js is yt-dlp's JS runtime for YouTube n-sig challenge solving, enabled
+# via /etc/yt-dlp.conf (deno is yt-dlp's default but is ~90MB; node is the
+# smaller supported option).
+# "yt-dlp[default]" is REQUIRED: a plain `pip install yt-dlp` omits the EJS
+# challenge-solver scripts (yt-dlp-ejs), so n-challenge solving fails and
+# resolve returns "No video formats found" even with a valid JS runtime.
 
 COPY --from=builder /app/restream /usr/local/bin/restream
 COPY --from=ffmpeg-dl /usr/local/bin/ffmpeg /usr/local/bin/
