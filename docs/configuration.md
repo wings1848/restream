@@ -19,6 +19,7 @@ pipelines:
         format: ""             # yt-dlp format selector; default "best" for live
         proxy: ""              # HTTP/SOCKS proxy, e.g. socks5://127.0.0.1:1080
         force_ipv4: "false"    # always force IPv4 resolve (rarely needed)
+        cookies: ""            # Netscape cookies.txt path (bot-checked/members-only streams)
     sink:
       type: bilibili           # registered sink name
       config:
@@ -56,6 +57,7 @@ You can add more entries under `pipelines:` — each pipeline runs concurrently 
 | `source.config.format` | `best` | yt-dlp format selector. Use `best` for live streams (see note below). Examples: `best`, `best[height<=1080]`. |
 | `source.config.proxy` | `""` | HTTP/SOCKS proxy, e.g. `socks5://127.0.0.1:1080`. TUN mode (VPN) is preferred — no proxy config needed. |
 | `source.config.force_ipv4` | `false` | Always force IPv4 for resolve. Usually unnecessary: if the default resolve fails (e.g. a broken IPv6 path), restream automatically retries once with IPv4. Set `true` only where IPv4 must always be used (e.g. a proxy that only supports IPv4). |
+| `source.config.cookies` | `""` | Path to a Netscape-format `cookies.txt`, passed to yt-dlp via `--cookies`. Required for streams behind YouTube's "Sign in to confirm you're not a bot" check or members-only content. Holds login credentials — never commit it. |
 | `sink.type` | — | Registered sink name, e.g. `bilibili`. |
 | `sink.config.rtmp_url` | `rtmp://live-push.bilivideo.com/live-bvc/` | RTMP ingest URL, up to `live-bvc/` (see key split below). |
 | `sink.config.stream_key` | — | Stream key / code (**required**). Supports `${BILIBILI_STREAM_KEY}`. |

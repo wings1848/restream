@@ -45,6 +45,11 @@ pipelines:
         # with IPv4. Set "true" only where IPv4 must always be used, such as a
         # proxy that only supports IPv4.
         force_ipv4: "false"
+        # Path to a Netscape-format cookies.txt (optional), passed to yt-dlp
+        # via --cookies. Required for streams behind YouTube's "Sign in to
+        # confirm you're not a bot" check or members-only content. This file
+        # holds login credentials — never commit it to the repo.
+        cookies: ""
 
     # --- Sink (destination) settings ---
     sink:

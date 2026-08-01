@@ -45,6 +45,11 @@ type YouTube struct {
 	// IPv4 but YouTube CDN signatures default to IPv6.
 	forceIPv4 bool
 
+	// cookies is a path to a Netscape-format cookies.txt passed to yt-dlp via
+	// --cookies. Required for streams behind YouTube's "Sign in to confirm
+	// you're not a bot" check or members-only content.
+	cookies string
+
 	// baseArgs holds the fixed yt-dlp arguments, precomputed once in New.
 	baseArgs []string
 
@@ -80,17 +85,22 @@ func New(config map[string]string) (source.Source, error) {
 		}
 		y.forceIPv4 = b
 	}
+	if v, ok := config["cookies"]; ok && v != "" {
+		y.cookies = v
+	}
 
 	// Precompute the fixed yt-dlp args once; GetStream only appends "-j" and the URL.
 	base := []string{
 		"--flat-playlist",
 		"--no-warnings",
 		"--socket-timeout", "10",
-		"--youtube-skip-dash-manifest",
 		"-f", y.format,
 	}
 	if y.proxy != "" {
 		base = append(base, "--proxy", y.proxy)
+	}
+	if y.cookies != "" {
+		base = append(base, "--cookies", y.cookies)
 	}
 	if y.forceIPv4 {
 		base = append(base, "--force-ipv4")

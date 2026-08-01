@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolve-level IPv4 fallback for the YouTube source: if the initial yt-dlp
   resolution fails (e.g. a broken IPv6 path), it is retried once with
   `--force-ipv4` automatically.
+- `source.config.cookies` to pass a Netscape-format `cookies.txt` to yt-dlp
+  via `--cookies`, required for streams behind YouTube's "Sign in to confirm
+  you're not a bot" check or members-only content.
 - YouTube source support for channel `/live` URLs, proxy support, and yt-dlp
   timeouts.
 - Config validation now rejects unresolved `${ENV}` placeholders and validates

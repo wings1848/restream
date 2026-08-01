@@ -136,3 +136,32 @@ exit 1
 		t.Errorf("error = %q, want 'ipv4 fallback also failed' note", err)
 	}
 }
+
+// TestGetStreamCookies verifies that a cookies config value is passed to
+// yt-dlp via --cookies.
+func TestGetStreamCookies(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "argv")
+	script := filepath.Join(dir, "yt-dlp")
+	scriptBody := `#!/bin/sh
+printf 'ARGV:%s\n' "$*" >> "` + logFile + `"
+echo '{"url":"http://fake-hls/c.m3u8","vcodec":"h264","acodec":"aac","ext":"mp4"}'
+`
+	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	src, err := New(map[string]string{"cookies": "/etc/restream/cookies.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.GetStream(context.Background(), "https://www.youtube.com/watch?v=abc123"); err != nil {
+		t.Fatalf("GetStream: %v", err)
+	}
+
+	log, _ := os.ReadFile(logFile)
+	if !strings.Contains(string(log), "--cookies /etc/restream/cookies.txt") {
+		t.Errorf("yt-dlp invocation missing --cookies, got: %s", log)
+	}
+}
