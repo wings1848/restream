@@ -1,4 +1,4 @@
-module restream
+module github.com/wings1848/restream
 
 go 1.22
 

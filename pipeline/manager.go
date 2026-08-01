@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"restream/config"
-	"restream/ffmpeg"
-	"restream/health"
-	"restream/sink"
-	"restream/source"
+	"github.com/wings1848/restream/config"
+	"github.com/wings1848/restream/ffmpeg"
+	"github.com/wings1848/restream/health"
+	"github.com/wings1848/restream/sink"
+	"github.com/wings1848/restream/source"
 )
 
 // Manager coordinates the lifecycle of one restream pipeline.

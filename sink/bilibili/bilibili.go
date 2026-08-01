@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"restream/sink"
+	"github.com/wings1848/restream/sink"
 )
 
 func init() {

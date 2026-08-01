@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"restream/source"
+	"github.com/wings1848/restream/source"
 )
 
 // youtubeURLRe matches valid YouTube live-stream URLs.

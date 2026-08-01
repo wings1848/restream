@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os/exec"
 
-	"restream/config"
-	"restream/sink"
-	"restream/source"
+	"github.com/wings1848/restream/config"
+	"github.com/wings1848/restream/sink"
+	"github.com/wings1848/restream/source"
 )
 
 // TranscodeMode controls how FFmpeg handles transcoding.

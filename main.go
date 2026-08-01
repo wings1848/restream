@@ -15,13 +15,13 @@ import (
 	"syscall"
 	"time"
 
-	"restream/config"
-	"restream/health"
-	"restream/pipeline"
+	"github.com/wings1848/restream/config"
+	"github.com/wings1848/restream/health"
+	"github.com/wings1848/restream/pipeline"
 
 	// Import source/sink implementations so their init() registers them.
-	_ "restream/sink/bilibili"
-	_ "restream/source/youtube"
+	_ "github.com/wings1848/restream/sink/bilibili"
+	_ "github.com/wings1848/restream/source/youtube"
 )
 
 // version is the restream release version printed by --version.
