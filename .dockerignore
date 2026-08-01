@@ -10,3 +10,4 @@ test-setup.sh
 *.log
 .gitignore
 .dockerignore
+.codegraph
