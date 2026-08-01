@@ -54,6 +54,45 @@ func TestCRLFProgressResetsStallTimer(t *testing.T) {
 	}
 }
 
+// TestCopyModeProgressResetsStallTimer guards the bug where copy-mode
+// progress lines (no fps= field) did not match the progress regex, so the
+// stall timer fired on a healthy pass-through stream.
+func TestCopyModeProgressResetsStallTimer(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pr.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Copy-mode progress: size/time/bitrate/speed, but NO fps=.
+	go func() {
+		defer pw.Close()
+		for i := 0; i < 8; i++ {
+			fmt.Fprintf(pw, "size=%6dkB time=00:00:%02d.00 bitrate=1000.0kbits/s speed=1.0x\r", i, i)
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	c := NewChecker(150*time.Millisecond, discardLogger())
+	statusCh := c.Start(ctx, pr)
+
+	start := time.Now()
+	select {
+	case s, ok := <-statusCh:
+		if !ok {
+			t.Fatalf("status channel closed before any status was read")
+		}
+		if elapsed := time.Since(start); elapsed < 400*time.Millisecond {
+			t.Fatalf("stalled reported after %v (<400ms): copy-mode progress did not reset the stall timer", elapsed)
+		}
+		if s != StatusStalled {
+			t.Fatalf("expected StatusStalled on EOF, got %v", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout: no status received")
+	}
+}
+
 // TestSingleErrorLineNotFatal ensures a single fatal-pattern line does not
 // kill the stream (requires errThreshold lines within errWindow).
 func TestSingleErrorLineNotFatal(t *testing.T) {

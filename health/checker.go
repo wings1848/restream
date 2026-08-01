@@ -50,7 +50,11 @@ type Stats struct {
 
 // Regex patterns for parsing FFmpeg progress lines on stderr.
 var (
-	progressRe = regexp.MustCompile(`fps=\s*([\d.]+).*speed=\s*([\d.]+)x`)
+	// A progress line must have speed= to count as progress; fps= is absent
+	// in copy mode (no decode/encode), so it cannot be required. Both modes
+	// always emit speed=.
+	progressRe = regexp.MustCompile(`speed=\s*([\d.]+)x`)
+	fpsRe      = regexp.MustCompile(`fps=\s*([\d.]+)`)
 	dropRe     = regexp.MustCompile(`drop=\s*(\d+)`)
 	bitrateRe  = regexp.MustCompile(`bitrate=\s*([\d.]+kbits/s)`)
 )
@@ -267,7 +271,9 @@ func (c *Checker) monitor(ctx context.Context, stderr io.Reader, statusCh chan<-
 			}
 
 			// Parse FFmpeg progress line for fps, speed, bitrate, and
-			// dropped frames.
+			// dropped frames. A line counts as progress when it has speed=
+			// (emitted in both transcode and copy modes; fps= is copy-mode
+			// absent), so the stall timer only resets on real output.
 			if matches := progressRe.FindStringSubmatch(line); matches != nil {
 				// Drain and reset the stall timer.
 				if !stallTimer.Stop() {
@@ -280,13 +286,13 @@ func (c *Checker) monitor(ctx context.Context, stderr io.Reader, statusCh chan<-
 
 				stats := Stats{}
 				if len(matches) >= 2 {
-					if fps, err := strconv.ParseFloat(strings.TrimSpace(matches[1]), 64); err == nil {
-						stats.FPS = fps
+					if speed, err := strconv.ParseFloat(strings.TrimSpace(matches[1]), 64); err == nil {
+						stats.Speed = speed
 					}
 				}
-				if len(matches) >= 3 {
-					if speed, err := strconv.ParseFloat(strings.TrimSpace(matches[2]), 64); err == nil {
-						stats.Speed = speed
+				if fm := fpsRe.FindStringSubmatch(line); fm != nil {
+					if fps, err := strconv.ParseFloat(strings.TrimSpace(fm[1]), 64); err == nil {
+						stats.FPS = fps
 					}
 				}
 				if bm := bitrateRe.FindStringSubmatch(line); bm != nil {
