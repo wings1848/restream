@@ -50,6 +50,10 @@ services:
       # - https_proxy=http://127.0.0.1:7897
     volumes:
       - ./config.yaml:/etc/restream/config.yaml:ro
+      # Optional: YouTube cookies for bot-checked / members-only streams
+      # (reference it in config.yaml as source.config.cookies). Holds login
+      # credentials — keep cookies.txt out of git.
+      - ./cookies.txt:/etc/restream/cookies.txt:ro
     command:
       - "--config"
       - "/etc/restream/config.yaml"
