@@ -19,16 +19,23 @@ import (
 
 // Manager coordinates the lifecycle of one restream pipeline.
 type Manager struct {
-	name   string
-	cfg    config.Pipeline
-	source source.Source
-	sink   sink.Sink
+	name               string
+	cfg                config.Pipeline
+	source             source.Source
+	sink               sink.Sink
+	healthCheckTimeout time.Duration
 }
 
-// NewManager creates a Manager from a pipeline configuration.
-func NewManager(cfg config.Pipeline) (*Manager, error) {
+// NewManager creates a Manager from a pipeline configuration. The
+// healthCheckTimeout is the stall timeout applied to FFmpeg health monitoring;
+// it is clamped to a minimum of 3 seconds to stay sane.
+func NewManager(cfg config.Pipeline, healthCheckTimeout time.Duration) (*Manager, error) {
 	if cfg.Name == "" {
 		return nil, fmt.Errorf("pipeline name is required")
+	}
+
+	if healthCheckTimeout < 3*time.Second {
+		healthCheckTimeout = 3 * time.Second
 	}
 
 	src, err := source.New(cfg.Source.Type, cfg.Source.Config)
@@ -42,10 +49,11 @@ func NewManager(cfg config.Pipeline) (*Manager, error) {
 	}
 
 	return &Manager{
-		name:   cfg.Name,
-		cfg:    cfg,
-		source: src,
-		sink:   snk,
+		name:               cfg.Name,
+		cfg:                cfg,
+		source:             src,
+		sink:               snk,
+		healthCheckTimeout: healthCheckTimeout,
 	}, nil
 }
 
@@ -60,7 +68,8 @@ func (m *Manager) Run(ctx context.Context) error {
 	l := slog.With("pipeline", m.name)
 
 	retriesLeft := m.cfg.Retry.MaxRetries
-	interval := time.Duration(m.cfg.Retry.InitialInterval) * time.Second
+	initialInterval := time.Duration(m.cfg.Retry.InitialInterval) * time.Second
+	interval := initialInterval
 	maxInterval := time.Duration(m.cfg.Retry.MaxInterval) * time.Second
 
 	for {
@@ -68,19 +77,31 @@ func (m *Manager) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		if err := m.runOnce(ctx, l); err != nil {
+		start := time.Now()
+		err := m.runOnce(ctx, l)
+		runDuration := time.Since(start)
+
+		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 
-			l.Error("pipeline failed", "error", err)
+			l.Error("pipeline failed", "error", err, "run_duration", runDuration)
 
 			if m.cfg.Retry.MaxRetries > 0 {
 				if retriesLeft <= 0 {
 					l.Error("max retries reached, giving up")
-					return fmt.Errorf("pipeline %q: max retries reached", m.name)
+					return fmt.Errorf("pipeline %q: max retries reached: %w", m.name, err)
 				}
 				retriesLeft--
+			}
+
+			// Reset the backoff when the pipeline ran for a meaningful amount
+			// of time before failing (longer than 2x the initial interval).
+			// This prevents a stale, grown interval from delaying a quick
+			// reconnect after a long healthy session.
+			if runDuration > 2*initialInterval {
+				interval = initialInterval
 			}
 
 			l.Info("retrying",
@@ -88,10 +109,8 @@ func (m *Manager) Run(ctx context.Context) error {
 				"interval_seconds", interval.Seconds(),
 			)
 
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(interval):
+			if err := backoffWait(ctx, interval); err != nil {
+				return err
 			}
 
 			// Exponential backoff, capped at maxInterval.
@@ -105,6 +124,20 @@ func (m *Manager) Run(ctx context.Context) error {
 			l.Info("ffmpeg exited cleanly")
 			return nil
 		}
+	}
+}
+
+// backoffWait blocks until the interval elapses or the context is cancelled.
+// It uses time.NewTimer and stops the timer on cancellation to avoid leaking
+// the underlying timer resource.
+func backoffWait(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -138,7 +171,10 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		Target:     target,
 		Ffmpeg:     m.cfg.FFmpeg,
 	}).BuildCommand(ctx)
-	l.Debug("ffmpeg command", "args", strings.Join(ffCmd.Args, " "))
+	// Building the argument string is only worth the cost at debug level.
+	if l.Enabled(ctx, slog.LevelDebug) {
+		l.Debug("ffmpeg command", "args", strings.Join(ffCmd.Args, " "))
+	}
 
 	// Pipe stderr for health monitoring.
 	stderrPipe, err := ffCmd.StderrPipe()
@@ -157,9 +193,8 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 	}
 	l.Info("ffmpeg started", "pid", ffCmd.Process.Pid)
 
-	// Start health monitoring.
-	healthTimeout := time.Duration(m.cfg.Retry.InitialInterval) * time.Second * 3
-	checker := health.NewChecker(healthTimeout)
+	// Start health monitoring with the configured health-check interval.
+	checker := health.NewChecker(m.healthCheckTimeout, l)
 	healthCh := checker.Start(ctx, stderrPipe)
 
 	// Wait for FFmpeg completion.
@@ -178,10 +213,24 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		}
 		return ctx.Err()
 	case status := <-healthCh:
-		l.Warn("health check failed, killing ffmpeg", "status", status)
+		// FFmpeg may have exited on its own at the same moment the checker
+		// reported a stall (stderr EOF). Drain doneCh first so a crash is
+		// reported with its real exit error rather than a spurious health
+		// failure. Only treat the health signal as authoritative when ffmpeg
+		// is still running.
+		select {
+		case err := <-doneCh:
+			if err != nil {
+				return fmt.Errorf("ffmpeg exited: %w", err)
+			}
+			l.Info("ffmpeg exited cleanly")
+			return nil
+		default:
+		}
+		l.Warn("health check failed, killing ffmpeg", "status", status.String())
 		ffCmd.Process.Kill()
 		<-doneCh
-		return fmt.Errorf("health check: status=%v", status)
+		return fmt.Errorf("health check: status=%s", status)
 	case err := <-doneCh:
 		if err != nil {
 			return fmt.Errorf("ffmpeg exited: %w", err)
