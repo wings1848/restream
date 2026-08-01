@@ -1,0 +1,60 @@
+# Deployment compose — runs the PREBUILT ghcr.io/wings1848/restream:latest
+# image, so you don't need Go/FFmpeg/yt-dlp or a local docker build.
+#
+#   cp config.yaml.example config.yaml        # edit your config
+#   export BILIBILI_STREAM_KEY="YOUR_KEY"     # or hardcode it in config.yaml
+#   docker compose -f docker-compose.deploy.yml up -d
+#
+# For building the image from source, use the development docker-compose.yml
+# (its restream service has a `build:` section) instead of this file.
+services:
+  # PO Token provider — auto-generates YouTube authentication tokens.
+  # Required for YouTube restreaming in 2026+. No manual cookie management.
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped
+    init: true
+    # Host network is REQUIRED: the restream container's yt-dlp plugin connects
+    # to the provider at 127.0.0.1:4416. On the default bridge network,
+    # 127.0.0.1 would be the container itself and PO-token auth silently fails.
+    network_mode: host
+    environment:
+      TOKEN_TTL: 6  # hours, default 6h
+    healthcheck:
+      # Image is a Debian Node app (no curl/wget); node's built-in fetch works.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4416/ping').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  restream:
+    image: ghcr.io/wings1848/restream:latest
+    restart: unless-stopped
+    # Host network: matches the verified-working setup (see test-setup.sh).
+    # Shares the host's network stack so yt-dlp reaches the pot-provider at
+    # 127.0.0.1:4416 and the RTMP push also goes out directly.
+    network_mode: host
+    # Optional resource ceilings for the transcode path (uncomment to apply):
+    # mem_limit: 1g
+    # cpus: "2.0"
+    depends_on:
+      pot-provider:
+        condition: service_healthy
+    environment:
+      - BILIBILI_STREAM_KEY=${BILIBILI_STREAM_KEY}
+      # Optional HTTP proxy for YouTube access (if outside VPN/TUN).
+      # Host network uses the host's network stack, so proxy to 127.0.0.1
+      # (host.docker.internal does NOT exist on host networking).
+      # - http_proxy=http://127.0.0.1:7897
+      # - https_proxy=http://127.0.0.1:7897
+    volumes:
+      - ./config.yaml:/etc/restream/config.yaml:ro
+    command:
+      - "--config"
+      - "/etc/restream/config.yaml"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

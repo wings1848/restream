@@ -44,14 +44,16 @@ go build -o restream .
 
 其他参数：`--config <path>`、`--log-level debug|info|warn|error`、`--version`。
 
-### 方式二：Docker Compose
+### 方式二：Docker Compose（预构建镜像，推荐）
 
 ```bash
 cp config.yaml.example config.yaml
 export BILIBILI_STREAM_KEY="你的Bilibili推流密钥"
-docker compose up -d
-docker compose logs -f
+docker compose -f docker-compose.deploy.yml up -d
+docker compose -f docker-compose.deploy.yml logs -f
 ```
+
+直接拉取预构建的 **`ghcr.io/wings1848/restream:latest`** 镜像，无需本地构建。想自行从源码构建镜像时，改用开发用的 `docker-compose.yml`（`docker compose up -d`）。
 
 > compose 中的两个服务均使用 `network_mode: host`，以确保 yt-dlp 能访问 `127.0.0.1:4416` 上的 PO Token 服务。
 

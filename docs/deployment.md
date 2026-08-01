@@ -64,20 +64,35 @@ See [docs/configuration.md](configuration.md) for the full field reference.
 
 ## Option 3: Docker Compose (recommended)
 
+There are two compose files:
+
+- **`docker-compose.deploy.yml`** — runs the prebuilt **`ghcr.io/wings1848/restream:latest`** image. Use this for deployment; nothing is built locally, so no Go/FFmpeg build environment is needed.
+- **`docker-compose.yml`** — builds the image from source via its `build:` section (development / self-builds).
+
+### Deploying with the prebuilt image (recommended)
+
 ```bash
 cp config.yaml.example config.yaml        # edit your config
 export BILIBILI_STREAM_KEY="YOUR_KEY"     # or hardcode it in config.yaml
-docker compose up -d
-docker compose logs -f
+docker compose -f docker-compose.deploy.yml up -d
+docker compose -f docker-compose.deploy.yml logs -f
 ```
 
-The compose file runs **both** services with `network_mode: host`:
+### Building from source
+
+```bash
+cp config.yaml.example config.yaml        # edit your config
+export BILIBILI_STREAM_KEY="YOUR_KEY"
+docker compose up -d                      # uses docker-compose.yml (build:)
+```
+
+Both compose files run **both** services with `network_mode: host`:
 
 - The `pot-provider` and the `restream` container share the host's network stack, so yt-dlp reaches the PO-token provider at `127.0.0.1:4416`.
 - On the default bridge network `127.0.0.1` would be the container itself and PO-token auth would silently fail.
 - `restream` also depends on `pot-provider` being healthy before it starts.
 - The restream container mounts `./config.yaml` read-only at `/etc/restream/config.yaml` and runs with `--config /etc/restream/config.yaml`.
-- Optional resource ceilings for the transcode path are commented out in the compose file (`mem_limit`, `cpus`) — uncomment to apply.
+- Optional resource ceilings for the transcode path are commented out in the compose files (`mem_limit`, `cpus`) — uncomment to apply.
 
 ### Environment variables
 
@@ -105,4 +120,4 @@ The `Dockerfile` is a multi-stage build:
 docker build -t restream .
 ```
 
-The compose file builds it automatically via the `build:` section. For a different target architecture you can override the `FFMPEG_ARCH` build arg (default `amd64`).
+The development `docker-compose.yml` builds it automatically via its `build:` section. For a different target architecture you can override the `FFMPEG_ARCH` build arg (default `amd64`).

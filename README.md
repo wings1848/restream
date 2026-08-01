@@ -44,14 +44,16 @@ go build -o restream .
 
 Other flags: `--config <path>`, `--log-level debug|info|warn|error`, `--version`.
 
-### 2. Docker Compose
+### 2. Docker Compose (prebuilt image — recommended)
 
 ```bash
-cp config.yaml.example config.yaml        # edit your config
-export BILIBILI_STREAM_KEY="YOUR_KEY"     # or hardcode it in config.yaml
-docker compose up -d
-docker compose logs -f
+cp config.yaml.example config.yaml              # edit your config
+export BILIBILI_STREAM_KEY="YOUR_KEY"           # or hardcode it in config.yaml
+docker compose -f docker-compose.deploy.yml up -d
+docker compose -f docker-compose.deploy.yml logs -f
 ```
+
+This pulls the prebuilt **`ghcr.io/wings1848/restream:latest`** image — no local build needed. To build the image from source instead, use the development `docker-compose.yml` (`docker compose up -d`).
 
 See [docs/deployment.md](docs/deployment.md) for all three ways to run, plus the required **PO Token Provider sidecar** for YouTube.
 

@@ -43,6 +43,9 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha
+            # Keep :latest pointing at the most recent release so README's
+            # docker-compose.deploy.yml can reference a stable tag.
+            type=raw,value=latest
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to GHCR
