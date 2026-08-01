@@ -133,6 +133,20 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 	args = append(args, y.baseArgs...)
 	args = append(args, "-j", url)
 	out, err := exec.CommandContext(ctx, "yt-dlp", args...).Output()
+	if err != nil && !y.forceIPv4 {
+		// Auto IPv4 fallback: yt-dlp's default (stdlib urllib) network stack
+		// resolves addresses in order and can hang or fail on a broken IPv6
+		// path. One cheap retry forcing IPv4 covers the common "v6 broken, v4
+		// fine" case. Skipped when the user already forces IPv4.
+		retry := make([]string, 0, len(y.baseArgs)+3)
+		retry = append(retry, y.baseArgs...)
+		retry = append(retry, "--force-ipv4", "-j", url)
+		if out2, err2 := exec.CommandContext(ctx, "yt-dlp", retry...).Output(); err2 == nil {
+			out, err = out2, nil
+		} else {
+			err = fmt.Errorf("%w; ipv4 fallback also failed: %v", err, err2)
+		}
+	}
 	if err != nil {
 		return nil, ytExecError("yt-dlp", err)
 	}
@@ -183,9 +197,14 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 }
 
 // ytExecError extracts stderr from exec.ExitError for better error messages.
+// When err wraps the ExitError with extra context (e.g. an IPv4-fallback retry
+// note), the outer context is kept instead of being dropped by errors.As.
 func ytExecError(cmdName string, err error) error {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
+		if err != exitErr {
+			return fmt.Errorf("%s: %v (stderr: %s)", cmdName, err, string(exitErr.Stderr))
+		}
 		return fmt.Errorf("%s: %s", cmdName, string(exitErr.Stderr))
 	}
 	return fmt.Errorf("%s: %w", cmdName, err)

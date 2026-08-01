@@ -40,7 +40,10 @@ pipelines:
         # HTTP/SOCKS proxy (optional). Use if YouTube is blocked.
         # TUN mode (VPN) is preferred — no proxy config needed.
         proxy: ""
-        # Force IPv4 if proxy only supports IPv4
+        # Force IPv4 for resolve. Usually NOT needed: if the default resolve
+        # fails (e.g. a broken IPv6 path), restream automatically retries once
+        # with IPv4. Set "true" only where IPv4 must always be used, such as a
+        # proxy that only supports IPv4.
         force_ipv4: "false"
 
     # --- Sink (destination) settings ---

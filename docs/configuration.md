@@ -18,7 +18,7 @@ pipelines:
         url: "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"   # required
         format: ""             # yt-dlp format selector; default "best" for live
         proxy: ""              # HTTP/SOCKS proxy, e.g. socks5://127.0.0.1:1080
-        force_ipv4: "false"    # force IPv4 if your proxy only supports IPv4
+        force_ipv4: "false"    # always force IPv4 resolve (rarely needed)
     sink:
       type: bilibili           # registered sink name
       config:
@@ -55,7 +55,7 @@ You can add more entries under `pipelines:` — each pipeline runs concurrently 
 | `source.config.url` | — | Live-stream URL (**required**). |
 | `source.config.format` | `best` | yt-dlp format selector. Use `best` for live streams (see note below). Examples: `best`, `best[height<=1080]`. |
 | `source.config.proxy` | `""` | HTTP/SOCKS proxy, e.g. `socks5://127.0.0.1:1080`. TUN mode (VPN) is preferred — no proxy config needed. |
-| `source.config.force_ipv4` | `false` | Force IPv4 when your proxy only supports IPv4. |
+| `source.config.force_ipv4` | `false` | Always force IPv4 for resolve. Usually unnecessary: if the default resolve fails (e.g. a broken IPv6 path), restream automatically retries once with IPv4. Set `true` only where IPv4 must always be used (e.g. a proxy that only supports IPv4). |
 | `sink.type` | — | Registered sink name, e.g. `bilibili`. |
 | `sink.config.rtmp_url` | `rtmp://live-push.bilivideo.com/live-bvc/` | RTMP ingest URL, up to `live-bvc/` (see key split below). |
 | `sink.config.stream_key` | — | Stream key / code (**required**). Supports `${BILIBILI_STREAM_KEY}`. |

@@ -59,3 +59,80 @@ echo "{\"url\":\"http://fake-hls/$n.m3u8\",\"vcodec\":\"h264\",\"acodec\":\"aac\
 		t.Fatalf("yt-dlp invoked %d times, want 1 (cache should absorb the second call)", n)
 	}
 }
+
+// TestGetStreamIPv4Fallback verifies the resolve-level auto fallback: when the
+// first yt-dlp call fails (a broken IPv6 path, say) and IPv4 is not already
+// forced, GetStream retries once with --force-ipv4 and returns the IPv4 result.
+func TestGetStreamIPv4Fallback(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "argv")
+	script := filepath.Join(dir, "yt-dlp")
+	// Fake yt-dlp: fail unless invoked with --force-ipv4; log every argv.
+	scriptBody := `#!/bin/sh
+printf 'ARGV:%s\n' "$*" >> "` + logFile + `"
+for a in "$@"; do
+  if [ "$a" = "--force-ipv4" ]; then
+    echo '{"url":"http://fake-hls/v4.m3u8","vcodec":"h264","acodec":"aac","ext":"mp4"}'
+    exit 0
+  fi
+done
+echo "getaddrinfo: no route to host" >&2
+exit 1
+`
+	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	src, err := New(map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := src.GetStream(context.Background(), "https://www.youtube.com/watch?v=abc123")
+	if err != nil {
+		t.Fatalf("GetStream after fallback: %v", err)
+	}
+	if info.URLs[0] != "http://fake-hls/v4.m3u8" {
+		t.Fatalf("fallback resolve URL = %q, want http://fake-hls/v4.m3u8", info.URLs[0])
+	}
+
+	// The second (fallback) invocation must carry --force-ipv4.
+	log, _ := os.ReadFile(logFile)
+	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("yt-dlp invoked %d times, want 2 (initial + ipv4 fallback):\n%s", len(lines), log)
+	}
+	if !strings.Contains(lines[1], "--force-ipv4") {
+		t.Fatalf("fallback invocation missing --force-ipv4, got: %s", lines[1])
+	}
+}
+
+// TestGetStreamIPv4FallbackAlsoFails verifies that when both the initial call
+// and the --force-ipv4 retry fail, GetStream surfaces an error mentioning both.
+func TestGetStreamIPv4FallbackAlsoFails(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "yt-dlp")
+	scriptBody := `#!/bin/sh
+echo "always broken" >&2
+exit 1
+`
+	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	src, err := New(map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = src.GetStream(context.Background(), "https://www.youtube.com/watch?v=abc123")
+	if err == nil {
+		t.Fatal("GetStream error = nil, want failure after both attempts")
+	}
+	if !strings.Contains(err.Error(), "always broken") {
+		t.Errorf("error = %q, want initial stderr in message", err)
+	}
+	if !strings.Contains(err.Error(), "ipv4 fallback also failed") {
+		t.Errorf("error = %q, want 'ipv4 fallback also failed' note", err)
+	}
+}

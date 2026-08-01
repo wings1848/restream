@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ffmpeg.threads` to limit FFmpeg encoder threads (and thus memory usage).
 - `force_ipv4` option for the YouTube source, for setups where only IPv4 is
   reachable.
+- Resolve-level IPv4 fallback for the YouTube source: if the initial yt-dlp
+  resolution fails (e.g. a broken IPv6 path), it is retried once with
+  `--force-ipv4` automatically.
 - YouTube source support for channel `/live` URLs and yt-dlp timeouts.
 - Config validation now rejects unresolved `${ENV}` placeholders and validates
   retry fields.
