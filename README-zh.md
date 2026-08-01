@@ -45,6 +45,16 @@ docker compose logs -f
 
 > compose 中的两个服务均使用 `network_mode: host`，以确保 yt-dlp 能访问 `127.0.0.1:4416` 上的 PO Token 服务。
 
+## 使用 AI 助手部署
+
+仓库内置 **`restream-deploy` skill**（[`skills/restream-deploy-SKILL.md`](skills/restream-deploy-SKILL.md)），可让 AI 编码助手（如 Claude Code）帮你快速部署与运维 restream。让 AI 部署时，它会：
+
+1. 先询问部署方式 —— **Docker Compose** 或 **二进制**；
+2. 再询问必要参数 —— YouTube 直播 URL 与 Bilibili 推流地址（它会帮你把整条 `rtmp://…?streamname=…` 拆成 `rtmp_url` + `stream_key`）；
+3. 完成配置、启动、并通过 `/healthz` 验证。
+
+> 示例提问：*"部署 restream，用 docker compose，YouTube 是 `https://www.youtube.com/live/xxx`，Bilibili 推流地址是 `rtmp://live-push.bilivideo.com/live-bvc/?streamname=…`"*
+
 ## Bilibili 推流密钥拆分
 
 Bilibili 后台给出的一整条 RTMP 地址需要拆成两项配置：

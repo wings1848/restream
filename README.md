@@ -45,6 +45,16 @@ docker compose logs -f
 
 See [docs/deployment.md](docs/deployment.md) for all three ways to run, plus the required **PO Token Provider sidecar** for YouTube.
 
+## Deploy with an AI agent
+
+The repo ships a **`restream-deploy` skill** ([`skills/restream-deploy-SKILL.md`](skills/restream-deploy-SKILL.md)) that lets an AI coding assistant (e.g. Claude Code) deploy and operate restream for you. When you ask the assistant to set up restream, it will:
+
+1. Ask how you want to deploy — **Docker Compose** or a **binary**;
+2. Ask for the required inputs — the YouTube live URL and the Bilibili push address (it will help you split the full `rtmp://…?streamname=…` string into `rtmp_url` + `stream_key`);
+3. Set up the config, start the relay, and verify it via `/healthz`.
+
+> Example prompt: *"部署 restream，用 docker compose，YouTube 是 `https://www.youtube.com/live/xxx`，Bilibili 推流地址是 `rtmp://live-push.bilivideo.com/live-bvc/?streamname=…`"*
+
 ## Documentation
 
 Detailed guides live in the `docs/` directory:
