@@ -22,9 +22,16 @@ FROM alpine:3.22 AS ffmpeg-dl
 
 ARG FFMPEG_ARCH=amd64
 
+# johnvansickle.com is unreliable: downloads occasionally truncate
+# (curl -f alone won't detect that, tar will). Retry with integrity
+# verification so a transient network hiccup doesn't fail the whole build.
 RUN apk add --no-cache curl xz \
-    && curl -fsSL -o /tmp/ffmpeg.tar.xz \
-       "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${FFMPEG_ARCH}-static.tar.xz" \
+    && for i in 1 2 3 4 5; do \
+         curl -fsSL --retry 3 --retry-all-errors -o /tmp/ffmpeg.tar.xz \
+           "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${FFMPEG_ARCH}-static.tar.xz" \
+         && tar -tJf /tmp/ffmpeg.tar.xz >/dev/null 2>&1 && break \
+         || { echo "ffmpeg download attempt $i failed, retrying"; sleep 5; }; \
+       done \
     && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
     && mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/
 
