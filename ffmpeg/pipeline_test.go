@@ -26,8 +26,37 @@ func buildArgs(mode string, info *source.StreamInfo, ff config.FFmpegConfig) []s
 
 func has(args []string, sub string) bool { return strings.Contains(strings.Join(args, " "), sub) }
 
+// indexOf returns the index of the first occurrence of s in args, or -1.
+func indexOf(args []string, s string) int {
+	for i, a := range args {
+		if a == s {
+			return i
+		}
+	}
+	return -1
+}
+
 func h264AAC() *source.StreamInfo {
 	return &source.StreamInfo{URLs: []string{"http://u1"}, VideoCodec: "h264", AudioCodec: "aac", FPS: 30}
+}
+
+func TestBuildCommandProxy(t *testing.T) {
+	args := buildArgs("copy", h264AAC(), config.FFmpegConfig{Proxy: "http://127.0.0.1:7897"})
+	if !has(args, "-http_proxy http://127.0.0.1:7897") {
+		t.Errorf("proxy missing '-http_proxy' arg: %v", args)
+	}
+	// The proxy option must precede the -i it applies to.
+	i := indexOf(args, "-i")
+	if i < 0 || !strings.Contains(strings.Join(args[:i], " "), "-http_proxy") {
+		t.Errorf("-http_proxy must precede -i: %v", args)
+	}
+}
+
+func TestBuildCommandNoProxyByDefault(t *testing.T) {
+	args := buildArgs("copy", h264AAC(), config.FFmpegConfig{})
+	if has(args, "-http_proxy") {
+		t.Errorf("no proxy arg expected without config: %v", args)
+	}
 }
 
 func TestBuildCommandCopy(t *testing.T) {

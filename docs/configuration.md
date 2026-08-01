@@ -73,6 +73,7 @@ You can add more entries under `pipelines:` — each pipeline runs concurrently 
 | `ffmpeg.audio_bitrate` | `128k` | Audio bitrate, e.g. `64k` \| `128k` \| `192k` \| `256k` \| `320k`. |
 | `ffmpeg.threads` | `2` | Encoder threads (≈ 256 MiB transcode memory for 1080p x264). Set `0` to keep FFmpeg's own default (one per CPU core, highest memory). |
 | `ffmpeg.maxrate` | `"8M"` | Uplink video bitrate cap (adds `-maxrate 8M -bufsize 8M`), near Bilibili's 8000 kbps limit. Transcode only — ignored in `copy` mode, which forwards the source bitrate unchanged. |
+| `ffmpeg.proxy` | `""` | HTTP/SOCKS proxy for the HLS pull (ffmpeg `-http_proxy`, per input). Required when YouTube is blocked on the direct path, and when the source URL is IP-bound to the resolving proxy exit (YouTube's signed URLs 403 on segments fetched from a different IP). Usually mirrors `source.config.proxy`. |
 | `retry.max_retries` | `0` | Maximum retry attempts; `0` = retry forever. |
 | `retry.initial_interval` | `5` | First retry delay (seconds). |
 | `retry.max_interval` | `60` | Backoff cap (seconds). |

@@ -62,6 +62,10 @@ type FFmpegConfig struct {
 	// own default (one per CPU core, highest memory).
 	Threads *int   `yaml:"threads"`
 	Maxrate string `yaml:"maxrate"` // uplink video bitrate cap for transcodes (e.g. "6M"), empty = unlimited
+	// Proxy is an HTTP/SOCKS proxy for the HLS pull (ffmpeg -http_proxy).
+	// Required when YouTube is blocked on the direct path, and when the
+	// source URL is IP-bound to a proxy exit (matching source.config.proxy).
+	Proxy string `yaml:"proxy"`
 }
 
 // RetryConfig controls exponential-backoff reconnection.

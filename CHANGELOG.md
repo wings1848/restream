@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-01
+
+### Added
+
+- `ffmpeg.proxy` config: routes the HLS pull through a proxy (ffmpeg
+  `-http_proxy`). Required when YouTube is blocked on the direct path or the
+  signed source URL is IP-bound to the resolving proxy exit — pulling from a
+  different IP fails with 403 on segments.
+
+[0.2.2]: https://github.com/wings1848/restream/releases/tag/v0.2.2
+
 ## [0.2.1] - 2026-08-01
 
 ### Fixed

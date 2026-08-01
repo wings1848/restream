@@ -69,6 +69,13 @@ func (p *Pipeline) BuildCommand(ctx context.Context) *exec.Cmd {
 	}
 	for _, u := range urls {
 		args = append(args, hlsPullFlags...)
+		// Route the pull through the configured proxy (ffmpeg's per-input
+		// -http_proxy). Must match source.config.proxy's exit: YouTube's
+		// signed URLs are bound to the resolving IP, so a direct pull from
+		// a different IP gets 403 on segments.
+		if p.ffCfg.Proxy != "" {
+			args = append(args, "-http_proxy", p.ffCfg.Proxy)
+		}
 		args = append(args, "-i", u)
 	}
 	if len(urls) >= 2 {

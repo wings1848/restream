@@ -105,6 +105,11 @@ pipelines:
       # Adds -maxrate 8M -bufsize 8M. Only affects re-encoded (transcoded)
       # video; copy mode forwards the source bitrate unchanged. Empty = no cap.
       maxrate: "8M"
+      # HTTP/SOCKS proxy for the HLS pull (ffmpeg -http_proxy). Set when the
+      # source URL is IP-bound to the resolving proxy exit — YouTube's signed
+      # URLs 403 on segments fetched from a different IP — and when YouTube
+      # is blocked on the direct path. Usually mirrors source.config.proxy.
+      # proxy: "http://127.0.0.1:7897"
 
     # --- Auto-reconnect / retry settings ---
     retry:
