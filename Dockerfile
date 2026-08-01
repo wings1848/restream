@@ -36,7 +36,7 @@ FROM alpine:3.22
 RUN apk add --no-cache \
     python3 \
     py3-pip \
-    quickjs \
+    nodejs \
     ca-certificates \
     tzdata \
     && pip3 install --break-system-packages --no-cache-dir -U \
@@ -44,10 +44,13 @@ RUN apk add --no-cache \
     && rm -rf /usr/lib/python3.12/test /usr/lib/python3.12/idlelib \
               /usr/lib/python3.12/turtledemo \
     && find /usr/lib/python3.12 -type d -name __pycache__ -prune -exec rm -rf {} + \
-    && echo '--js-runtimes quickjs' > /etc/yt-dlp.conf
+    && echo '--js-runtimes node' > /etc/yt-dlp.conf
 
-# QuickJS (936KB) is yt-dlp's JS runtime for YouTube n-sig challenge solving;
-# enabled via /etc/yt-dlp.conf (deno is the default but is ~90MB).
+# Node.js is yt-dlp's JS runtime for YouTube n-sig challenge solving. It is
+# REQUIRED: the 2026 n-sig algorithm exceeds what embedded runtimes like
+# QuickJS can execute, and a failed n-challenge yields "No video formats
+# found". Deno is yt-dlp's default but is ~90MB; node is the smaller
+# supported option and is enabled via /etc/yt-dlp.conf.
 
 COPY --from=builder /app/restream /usr/local/bin/restream
 COPY --from=ffmpeg-dl /usr/local/bin/ffmpeg /usr/local/bin/
