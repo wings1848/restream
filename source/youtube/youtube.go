@@ -10,13 +10,14 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"restream/source"
 )
 
 // youtubeURLRe matches valid YouTube live-stream URLs.
-var youtubeURLRe = regexp.MustCompile(`^https?://(www\.)?(youtube\.com/(watch\?v=|live/)|youtu\.be/)`)
+var youtubeURLRe = regexp.MustCompile(`^https?://(www\.)?(youtube\.com/(watch\?v=|live/|@[^/]+/live)|youtu\.be/)`)
 
 func init() {
 	source.Register("youtube", New)
@@ -35,6 +36,9 @@ type YouTube struct {
 	// forceIPv4 forces yt-dlp to use IPv4. Useful when proxy only supports
 	// IPv4 but YouTube CDN signatures default to IPv6.
 	forceIPv4 bool
+
+	// baseArgs holds the fixed yt-dlp arguments, precomputed once in New.
+	baseArgs []string
 }
 
 // New is the Factory registered under the name "youtube".
@@ -48,9 +52,36 @@ func New(config map[string]string) (source.Source, error) {
 	if v, ok := config["proxy"]; ok {
 		y.proxy = v
 	}
-	if v, ok := config["force_ipv4"]; ok && v != "" && v != "false" && v != "0" {
-		y.forceIPv4 = true
+	if v, ok := config["force_ipv4"]; ok && v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			switch strings.ToLower(v) {
+			case "on", "yes":
+				b = true
+			case "off", "no":
+				b = false
+			default:
+				return nil, fmt.Errorf("youtube: invalid force_ipv4 value %q", v)
+			}
+		}
+		y.forceIPv4 = b
 	}
+
+	// Precompute the fixed yt-dlp args once; GetStream only appends "-j" and the URL.
+	base := []string{
+		"--flat-playlist",
+		"--no-warnings",
+		"--socket-timeout", "10",
+		"--youtube-skip-dash-manifest",
+		"-f", y.format,
+	}
+	if y.proxy != "" {
+		base = append(base, "--proxy", y.proxy)
+	}
+	if y.forceIPv4 {
+		base = append(base, "--force-ipv4")
+	}
+	y.baseArgs = base
 	return y, nil
 }
 
@@ -72,8 +103,9 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		return nil, err
 	}
 
-	args := append(y.buildArgs(), "-f", y.format, "-j", url)
-	args = append(args, y.buildNetArgs()...)
+	args := make([]string, 0, len(y.baseArgs)+2)
+	args = append(args, y.baseArgs...)
+	args = append(args, "-j", url)
 	out, err := exec.CommandContext(ctx, "yt-dlp", args...).Output()
 	if err != nil {
 		return nil, ytExecError("yt-dlp", err)
@@ -119,33 +151,13 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 	}, nil
 }
 
-// buildArgs returns the base yt-dlp args. Authentication (PO Token) is
-// handled externally by the bgutil-ytdlp-pot-provider plugin, not via args.
-func (y *YouTube) buildArgs() []string {
-	return []string{"--flat-playlist", "--no-warnings"}
-}
-
-// buildNetArgs returns extra yt-dlp arguments for the network path
-// (proxy, force-ipv4). Authentication (PO Token) is handled by the
-// bgutil-ytdlp-pot-provider plugin, which yt-dlp auto-discovers.
-func (y *YouTube) buildNetArgs() []string {
-	var extraArgs []string
-	if y.proxy != "" {
-		extraArgs = append(extraArgs, "--proxy", y.proxy)
-	}
-	if y.forceIPv4 {
-		extraArgs = append(extraArgs, "--force-ipv4")
-	}
-	return extraArgs
-}
-
 // ytExecError extracts stderr from exec.ExitError for better error messages.
-func ytExecError(context string, err error) error {
+func ytExecError(cmdName string, err error) error {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return fmt.Errorf("%s: %s", context, string(exitErr.Stderr))
+		return fmt.Errorf("%s: %s", cmdName, string(exitErr.Stderr))
 	}
-	return fmt.Errorf("%s: %w", context, err)
+	return fmt.Errorf("%s: %w", cmdName, err)
 }
 
 // normalizeCodec maps yt-dlp's ISO BMFF codec identifiers to canonical names
