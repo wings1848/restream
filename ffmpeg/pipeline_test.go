@@ -126,3 +126,17 @@ func TestBuildCommandSingleInputNoMap(t *testing.T) {
 		t.Errorf("single input should not add -map: %v", args)
 	}
 }
+
+func TestBuildCommandMaxrate(t *testing.T) {
+	ff := config.FFmpegConfig{VideoEncoder: "libx264", Maxrate: "6M"}
+	args := buildArgs("force", &source.StreamInfo{URLs: []string{"http://u1"}}, ff)
+	if !has(args, "-maxrate 6M") || !has(args, "-bufsize 6M") {
+		t.Errorf("maxrate should add -maxrate/-bufsize: %v", args)
+	}
+
+	// copy mode never re-encodes, so maxrate must not appear.
+	argsCopy := buildArgs("copy", h264AAC(), config.FFmpegConfig{Maxrate: "6M"})
+	if has(argsCopy, "-maxrate") {
+		t.Errorf("copy mode must not add -maxrate: %v", argsCopy)
+	}
+}

@@ -4,9 +4,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"restream/config"
+	"restream/health"
 	"restream/pipeline"
 
 	// Import source/sink implementations so their init() registers them.
@@ -88,13 +91,31 @@ func main() {
 	// Health-check stall timeout comes from the global config (seconds).
 	healthCheckTimeout := time.Duration(cfg.Global.HealthCheckInterval) * time.Second
 
+	// Shared health registry: pipelines report their status to it and the
+	// /healthz HTTP endpoint serves a snapshot.
+	reg := health.NewRegistry()
+
+	// Start the /healthz status endpoint if configured (default :8080).
+	if cfg.Global.HttpAddr != "" {
+		http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(reg.Snapshot())
+		})
+		go func() {
+			logger.Info("healthz endpoint listening", "addr", cfg.Global.HttpAddr)
+			if err := http.ListenAndServe(cfg.Global.HttpAddr, nil); err != nil {
+				logger.Error("healthz server failed", "error", err)
+			}
+		}()
+	}
+
 	// Launch all pipelines concurrently.
 	var wg sync.WaitGroup
 	for _, pipeCfg := range cfg.Pipelines {
 		wg.Add(1)
 		go func(pc config.Pipeline) {
 			defer wg.Done()
-			mgr, err := pipeline.NewManager(pc, healthCheckTimeout)
+			mgr, err := pipeline.NewManager(pc, healthCheckTimeout, reg)
 			if err != nil {
 				// A single bad pipeline should not take down the others.
 				logger.Error("failed to create pipeline", "name", pc.Name, "error", err)

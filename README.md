@@ -154,6 +154,7 @@ vim config.yaml
 global:
   log_level: info              # 日志级别: debug | info | warn | error
   health_check_interval: 10    # 直播“停滞”检测超时（秒）：ffmpeg 该秒数内无进度即判定停滞并重连，建议 3-60
+  http_addr: ":8080"           # /healthz 状态端点监听地址（JSON），空字符串 = 禁用
 
 pipelines:
   - name: "youtube-to-bilibili"  # 管道名称（日志中标识用）
@@ -181,6 +182,7 @@ pipelines:
       audio_encoder: aac         # 音频编码器
       audio_bitrate: 128k        # 音频码率
       threads: 0                 # 编码线程数（0 = ffmpeg 默认，全核；限制可降内存）
+      maxrate: ""                # 上行视频码率上限（弱网用，如 "6M"）；仅转码生效，copy 模式无效
 
     retry:
       max_retries: 0             # 最大重试次数（0 = 无限重试）
@@ -227,6 +229,19 @@ sink:
 | `copy` | 流复制模式，不进行编解码，直接转发原始流 | 极低（几乎为零） |
 | `auto` | 自动模式，检测源流编码格式，仅在必要时转码 | 中等 |
 | `force` | 强制转码，使用配置的编码参数重新编码 | 较高 |
+
+### 健康状态端点（healthz）
+
+`global.http_addr`（默认 `:8080`）启动一个 HTTP 端点，返回 JSON 形式的每条管道实时状态，适合 7×24 监控/告警：
+
+```bash
+curl -s http://127.0.0.1:8080/healthz
+# {"youtube-to-bilibili":{"state":"running","started":"...","uptime":3600,"bitrate":"4561.0kbits/s","fps":30,"stderr_tail":[]}}
+```
+
+- `state`：`resolving` / `running` / `backoff` / `stopped`
+- `last_error`：最近一次失败原因；`stderr_tail`：ffmpeg 最近 20 行 stderr（排障用）
+- 配合 Docker 时，`healthcheck` 可探测 `http://127.0.0.1:8080/healthz`（compose 已用 host 网络）
 
 ### 多管道配置
 

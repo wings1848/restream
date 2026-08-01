@@ -23,6 +23,9 @@ type Config struct {
 type GlobalConfig struct {
 	LogLevel            string `yaml:"log_level"`
 	HealthCheckInterval int    `yaml:"health_check_interval"`
+	// HttpAddr is the listen address for the /healthz status endpoint
+	// (e.g. ":8080"). Empty disables the endpoint.
+	HttpAddr string `yaml:"http_addr"`
 }
 
 // Pipeline describes a single source→sink restream pipeline.
@@ -56,6 +59,7 @@ type FFmpegConfig struct {
 	AudioBitrate string `yaml:"audio_bitrate"` // 128k, 192k, ...
 	Scale        string `yaml:"scale"`         // resolution scaling (e.g. "-1:720"), empty = no scale
 	Threads      int    `yaml:"threads"`       // encoder threads; 0 = ffmpeg default (all cores)
+	Maxrate      string `yaml:"maxrate"`       // uplink video bitrate cap for transcodes (e.g. "6M"), empty = unlimited
 }
 
 // RetryConfig controls exponential-backoff reconnection.
@@ -72,6 +76,7 @@ func DefaultConfig() Config {
 		Global: GlobalConfig{
 			LogLevel:            "info",
 			HealthCheckInterval: 10,
+			HttpAddr:            ":8080",
 		},
 	}
 }

@@ -24,12 +24,15 @@ type Manager struct {
 	source             source.Source
 	sink               sink.Sink
 	healthCheckTimeout time.Duration
+	reg                *health.Registry
+	startedAt          time.Time
 }
 
 // NewManager creates a Manager from a pipeline configuration. The
 // healthCheckTimeout is the stall timeout applied to FFmpeg health monitoring;
-// it is clamped to a minimum of 3 seconds to stay sane.
-func NewManager(cfg config.Pipeline, healthCheckTimeout time.Duration) (*Manager, error) {
+// it is clamped to a minimum of 3 seconds to stay sane. reg, when non-nil, is
+// the shared health registry the pipeline reports its status to (for /healthz).
+func NewManager(cfg config.Pipeline, healthCheckTimeout time.Duration, reg *health.Registry) (*Manager, error) {
 	if cfg.Name == "" {
 		return nil, fmt.Errorf("pipeline name is required")
 	}
@@ -54,7 +57,23 @@ func NewManager(cfg config.Pipeline, healthCheckTimeout time.Duration) (*Manager
 		source:             src,
 		sink:               snk,
 		healthCheckTimeout: healthCheckTimeout,
+		reg:                reg,
 	}, nil
+}
+
+// setHealthState publishes this pipeline's status to the shared registry.
+func (m *Manager) setHealthState(state health.PipelineState, lastErr string, tail []string) {
+	if m.reg == nil {
+		return
+	}
+	st := health.PipelineStatus{State: state}
+	if state == health.StateRunning && !m.startedAt.IsZero() {
+		st.Started = m.startedAt
+		st.Uptime = time.Since(m.startedAt)
+	}
+	st.LastError = lastErr
+	st.StderrTail = tail
+	m.reg.Set(m.name, st)
 }
 
 // Name returns the pipeline name.
@@ -145,11 +164,14 @@ func backoffWait(ctx context.Context, interval time.Duration) error {
 // command, runs it with health monitoring, and returns nil on clean
 // exit or an error.
 func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
+	m.setHealthState(health.StateResolving, "", nil)
+
 	// Resolve stream URLs (used as FFmpeg inputs) and codec metadata. The
 	// codecs drive the auto-transcode decision in BuildCommand.
 	l.Debug("resolving source stream", "url", m.cfg.Source.Config["url"])
 	streamInfo, err := m.source.GetStream(ctx, m.cfg.Source.Config["url"])
 	if err != nil {
+		m.setHealthState(health.StateBackoff, err.Error(), nil)
 		return fmt.Errorf("resolve source: %w", err)
 	}
 	l.Debug("source resolved",
@@ -161,6 +183,7 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 	// Get sink target.
 	target, err := m.sink.GetTarget(ctx, m.cfg.Sink.Config)
 	if err != nil {
+		m.setHealthState(health.StateBackoff, err.Error(), nil)
 		return fmt.Errorf("get sink target: %w", err)
 	}
 
@@ -179,6 +202,7 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 	// Pipe stderr for health monitoring.
 	stderrPipe, err := ffCmd.StderrPipe()
 	if err != nil {
+		m.setHealthState(health.StateBackoff, err.Error(), nil)
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
@@ -189,13 +213,44 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 	)
 
 	if err := ffCmd.Start(); err != nil {
+		m.setHealthState(health.StateBackoff, err.Error(), nil)
 		return fmt.Errorf("ffmpeg start: %w", err)
 	}
+	m.startedAt = time.Now()
+	m.setHealthState(health.StateRunning, "", nil)
 	l.Info("ffmpeg started", "pid", ffCmd.Process.Pid)
 
 	// Start health monitoring with the configured health-check interval.
 	checker := health.NewChecker(m.healthCheckTimeout, l)
 	healthCh := checker.Start(ctx, stderrPipe)
+
+	// Periodically publish ffmpeg stats to the health registry so /healthz
+	// reflects live bitrate/fps. Stops when runOnce returns.
+	statsStop := make(chan struct{})
+	defer close(statsStop)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-statsStop:
+				return
+			case <-ticker.C:
+				s := checker.LatestStats()
+				m.setHealthState(health.StateRunning, "", nil)
+				if m.reg != nil {
+					m.reg.Set(m.name, health.PipelineStatus{
+						State:      health.StateRunning,
+						Started:    m.startedAt,
+						Uptime:     time.Since(m.startedAt),
+						Bitrate:    s.Bitrate,
+						FPS:        s.FPS,
+						StderrTail: checker.Tail(),
+					})
+				}
+			}
+		}
+	}()
 
 	// Wait for FFmpeg completion.
 	doneCh := make(chan error, 1)
@@ -211,6 +266,7 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 			ffCmd.Process.Kill()
 			<-doneCh
 		}
+		m.setHealthState(health.StateStopped, "shutdown", nil)
 		return ctx.Err()
 	case status := <-healthCh:
 		// FFmpeg may have exited on its own at the same moment the checker
@@ -221,21 +277,27 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 		select {
 		case err := <-doneCh:
 			if err != nil {
+				m.setHealthState(health.StateBackoff, err.Error(), checker.Tail())
 				return fmt.Errorf("ffmpeg exited: %w", err)
 			}
 			l.Info("ffmpeg exited cleanly")
+			m.setHealthState(health.StateStopped, "", nil)
 			return nil
 		case <-time.After(300 * time.Millisecond):
 		}
 		l.Warn("health check failed, killing ffmpeg", "status", status.String())
 		ffCmd.Process.Kill()
 		<-doneCh
-		return fmt.Errorf("health check: status=%s", status)
+		err := fmt.Errorf("health check: status=%s", status)
+		m.setHealthState(health.StateBackoff, err.Error(), checker.Tail())
+		return err
 	case err := <-doneCh:
 		if err != nil {
+			m.setHealthState(health.StateBackoff, err.Error(), checker.Tail())
 			return fmt.Errorf("ffmpeg exited: %w", err)
 		}
 		l.Info("ffmpeg exited cleanly")
+		m.setHealthState(health.StateStopped, "", nil)
 		return nil
 	}
 }

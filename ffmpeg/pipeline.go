@@ -108,6 +108,11 @@ func (p *Pipeline) BuildCommand(ctx context.Context) *exec.Cmd {
 			if p.ffCfg.Scale != "" {
 				args = append(args, "-vf", fmt.Sprintf("scale=%s", p.ffCfg.Scale))
 			}
+			// Cap the uplink bitrate for weak connections. Only affects the
+			// re-encoded video; bufsize mirrors maxrate (1:1) as a simple default.
+			if p.ffCfg.Maxrate != "" {
+				args = append(args, "-maxrate", p.ffCfg.Maxrate, "-bufsize", p.ffCfg.Maxrate)
+			}
 			// Live-encoding flags: low latency, FLV-safe pixel format, and a
 			// keyframe cadence (GOP) of 2x the source FPS.
 			gop := 60

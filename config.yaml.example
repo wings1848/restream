@@ -10,6 +10,9 @@ global:
   # long, the stream is considered stalled and restream reconnects.
   # This is the actual stall timeout, not a poll interval. Sane range: 3-60.
   health_check_interval: 10
+  # /healthz status endpoint listen address (JSON: per-pipeline state, uptime,
+  # last error, ffmpeg bitrate/fps, stderr tail). Empty string disables it.
+  http_addr: ":8080"
 
 pipelines:
   - name: "youtube-to-bilibili"
@@ -77,6 +80,10 @@ pipelines:
       # Encoder threads: 0 = ffmpeg default (one per CPU core, highest memory).
       # Limit to cap transcode memory, e.g. 2 = ~200MB for 1080p x264.
       threads: 0
+      # Uplink video bitrate cap (weak uplinks): e.g. "6M" adds
+      # -maxrate 6M -bufsize 6M. Only affects re-encoded (transcoded) video;
+      # copy mode forwards the source bitrate unchanged. Empty = no cap.
+      maxrate: ""
 
     # --- Auto-reconnect / retry settings ---
     retry:

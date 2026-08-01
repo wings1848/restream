@@ -12,12 +12,20 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"restream/source"
 )
 
 // youtubeURLRe matches valid YouTube live-stream URLs.
 var youtubeURLRe = regexp.MustCompile(`^https?://(www\.)?(youtube\.com/(watch\?v=|live/|@[^/]+/live)|youtu\.be/)`)
+
+// cacheTTL bounds how long a resolved StreamInfo is reused on reconnects.
+// The HLS URL carries a long expire (~6h), so re-running the full yt-dlp
+// extraction (seconds + PO-token solve) on every transient failure is wasted;
+// a 10-minute TTL avoids serving an expiring URL.
+const cacheTTL = 10 * time.Minute
 
 func init() {
 	source.Register("youtube", New)
@@ -39,6 +47,12 @@ type YouTube struct {
 
 	// baseArgs holds the fixed yt-dlp arguments, precomputed once in New.
 	baseArgs []string
+
+	// mu guards cached/cachedAt.
+	mu sync.Mutex
+	// cached is the last successful resolution, reused for rapid reconnects.
+	cached   *source.StreamInfo
+	cachedAt time.Time
 }
 
 // New is the Factory registered under the name "youtube".
@@ -103,6 +117,18 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		return nil, err
 	}
 
+	// Reuse the last successful resolution within the TTL so a rapid
+	// reconnect (e.g. a transient ffmpeg failure) skips the full yt-dlp
+	// extraction. Return a copy so callers can't mutate the cache.
+	y.mu.Lock()
+	if y.cached != nil && time.Since(y.cachedAt) < cacheTTL {
+		info := *y.cached
+		info.URLs = append([]string(nil), y.cached.URLs...)
+		y.mu.Unlock()
+		return &info, nil
+	}
+	y.mu.Unlock()
+
 	args := make([]string, 0, len(y.baseArgs)+2)
 	args = append(args, y.baseArgs...)
 	args = append(args, "-j", url)
@@ -140,7 +166,7 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		urls = []string{raw.URL}
 	}
 
-	return &source.StreamInfo{
+	info := &source.StreamInfo{
 		URLs:       urls,
 		VideoCodec: normalizeCodec(raw.Vcodec),
 		AudioCodec: normalizeCodec(raw.Acodec),
@@ -148,7 +174,12 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		Resolution: raw.Resolution,
 		FPS:        raw.FPS,
 		Bitrate:    int64(raw.TBR * 1000), // kbps → bps
-	}, nil
+	}
+	y.mu.Lock()
+	y.cached = info
+	y.cachedAt = time.Now()
+	y.mu.Unlock()
+	return info, nil
 }
 
 // ytExecError extracts stderr from exec.ExitError for better error messages.
