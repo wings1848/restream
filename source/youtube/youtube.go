@@ -166,7 +166,12 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 	retryIn := y.failCooldown - time.Since(y.lastFailAt)
 	if !y.lastFailAt.IsZero() && retryIn > 0 {
 		y.mu.Unlock()
-		return nil, fmt.Errorf("youtube: resolve failed recently, cooling down for %s", retryIn.Round(time.Second))
+		// The manager waits at least RetryAfter before the next attempt,
+		// so it doesn't wake up into an active cooldown.
+		return nil, &source.RetryAfterError{
+			RetryAfter: retryIn,
+			Err:        fmt.Errorf("youtube: resolve failed recently, cooling down"),
+		}
 	}
 	y.mu.Unlock()
 
@@ -189,10 +194,7 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		}
 	}
 	if err != nil {
-		// Start the failCooldown window so subsequent calls fail fast.
-		y.mu.Lock()
-		y.lastFailAt = time.Now()
-		y.mu.Unlock()
+		y.noteFailure()
 		return nil, ytExecError("yt-dlp", err)
 	}
 
@@ -209,6 +211,9 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		} `json:"requested_formats"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
+		// A bot-check page can make yt-dlp exit 0 with garbage HTML; that is
+		// a failed resolve too, so it starts the cooldown as well.
+		y.noteFailure()
 		return nil, fmt.Errorf("parsing yt-dlp JSON: %w", err)
 	}
 
@@ -239,6 +244,14 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 	y.cachedAt = time.Now()
 	y.mu.Unlock()
 	return info, nil
+}
+
+// noteFailure starts the failCooldown window so subsequent GetStream calls
+// fail fast instead of re-running yt-dlp.
+func (y *YouTube) noteFailure() {
+	y.mu.Lock()
+	y.lastFailAt = time.Now()
+	y.mu.Unlock()
 }
 
 // ytExecError extracts stderr from exec.ExitError for better error messages.

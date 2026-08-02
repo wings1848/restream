@@ -2,12 +2,15 @@ package youtube
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wings1848/restream/source"
 )
 
 // writeFakeYtDlp installs a fake yt-dlp script with the given body into dir
@@ -104,10 +107,19 @@ exit 1
 		t.Fatalf("yt-dlp invoked %d times on first call, want 2 (primary + ipv4 fallback)", n)
 	}
 
-	// Within the cooldown, GetStream must fail WITHOUT running yt-dlp.
+	// Within the cooldown, GetStream must fail WITHOUT running yt-dlp, and
+	// the error must carry the remaining cooldown so the manager can pace
+	// its retry instead of waking into an active cooldown.
 	_, err = src.GetStream(ctx, url)
 	if err == nil {
 		t.Fatal("expected cooldown error")
+	}
+	var rae *source.RetryAfterError
+	if !errors.As(err, &rae) {
+		t.Fatalf("expected RetryAfterError, got: %v", err)
+	}
+	if rae.RetryAfter <= 0 {
+		t.Fatalf("RetryAfter = %s, want > 0", rae.RetryAfter)
 	}
 	if !strings.Contains(err.Error(), "cooling down") {
 		t.Fatalf("expected cooldown error, got: %v", err)

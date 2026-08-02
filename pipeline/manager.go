@@ -4,6 +4,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -105,7 +106,20 @@ func (m *Manager) Run(ctx context.Context) error {
 				return ctx.Err()
 			}
 
-			l.Error("pipeline failed", "error", err, "run_duration", runDuration)
+			// A RetryAfterError is a source-requested resolve cooldown —
+			// expected pacing rather than a failure: log it at Info and
+			// wait at least RetryAfter so the loop doesn't wake into an
+			// active cooldown (see source.RetryAfterError).
+			var retryAfterErr *source.RetryAfterError
+			errors.As(err, &retryAfterErr)
+			if retryAfterErr != nil {
+				l.Info("resolve cooling down",
+					"error", err,
+					"retry_after", retryAfterErr.RetryAfter.Round(time.Second),
+				)
+			} else {
+				l.Error("pipeline failed", "error", err, "run_duration", runDuration)
+			}
 
 			if m.cfg.Retry.MaxRetries > 0 {
 				if retriesLeft <= 0 {
@@ -123,12 +137,18 @@ func (m *Manager) Run(ctx context.Context) error {
 				interval = initialInterval
 			}
 
+			wait := interval
+			if retryAfterErr != nil && retryAfterErr.RetryAfter > wait {
+				wait = retryAfterErr.RetryAfter
+			}
+
 			l.Info("retrying",
 				"retries_left", retriesLeft,
 				"interval_seconds", interval.Seconds(),
+				"wait_seconds", wait.Seconds(),
 			)
 
-			if err := backoffWait(ctx, interval); err != nil {
+			if err := backoffWait(ctx, wait); err != nil {
 				return err
 			}
 

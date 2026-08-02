@@ -5,6 +5,8 @@ package source
 
 import (
 	"context"
+	"fmt"
+	"time"
 )
 
 // StreamInfo holds metadata and access URLs for a detected live stream.
@@ -41,3 +43,23 @@ type Source interface {
 // Factory is a constructor that takes a flat string→string config map and
 // returns a configured Source instance.
 type Factory func(config map[string]string) (Source, error)
+
+// RetryAfterError is returned by GetStream when a resolve must be postponed —
+// e.g. a cooldown after a failed extraction. The pipeline manager treats it
+// like a resolve failure but waits at least RetryAfter before the next
+// attempt: retry pacing stays in the manager's backoff loop, while the source
+// still sets its own minimum retry floor.
+type RetryAfterError struct {
+	// RetryAfter is the minimum delay before the next resolve attempt.
+	RetryAfter time.Duration
+	// Err is the underlying failure.
+	Err error
+}
+
+func (e *RetryAfterError) Error() string {
+	return fmt.Sprintf("%v (retry after %s)", e.Err, e.RetryAfter)
+}
+
+func (e *RetryAfterError) Unwrap() error {
+	return e.Err
+}
