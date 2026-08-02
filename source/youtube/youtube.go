@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -30,6 +31,12 @@ const cacheTTL = 10 * time.Minute
 // defaultFailCooldown is the fallback for the fail_cooldown config; see the
 // failCooldown field for the rationale.
 const defaultFailCooldown = 60 * time.Second
+
+// maxFailCooldown clamps fail_cooldown. Without the cap, a typo'd value such
+// as 1e15 seconds overflows time.Duration and wraps negative, which would
+// disable the cooldown entirely (or, combined with the retryIn subtraction,
+// freeze the resolver for ~292 years).
+const maxFailCooldown = 24 * time.Hour
 
 func init() {
 	source.Register("youtube", New)
@@ -64,7 +71,7 @@ type YouTube struct {
 	// not a bot") for hours.
 	failCooldown time.Duration
 
-	// mu guards cached/cachedAt/lastFailAt.
+	// mu guards cached/cachedAt/lastFailAt/lastFailErr.
 	mu sync.Mutex
 	// cached is the last successful resolution, reused for rapid reconnects.
 	cached   *source.StreamInfo
@@ -72,6 +79,10 @@ type YouTube struct {
 	// lastFailAt is the last failed resolution; non-zero means a cooldown
 	// is active until lastFailAt+failCooldown.
 	lastFailAt time.Time
+	// lastFailErr is the resolve error that started the cooldown; it is
+	// surfaced by RetryAfterError so /healthz keeps showing the real cause
+	// (yt-dlp stderr, JSON error) for the whole cooldown window.
+	lastFailErr error
 }
 
 // New is the Factory registered under the name "youtube".
@@ -104,11 +115,20 @@ func New(config map[string]string) (source.Source, error) {
 	}
 	y.failCooldown = defaultFailCooldown
 	if v, ok := config["fail_cooldown"]; ok && v != "" {
+		// Invalid values (parse error, <=0, NaN, ±Inf) fall back to the
+		// default instead of failing New(): on an unattended 7x24 box a
+		// config typo must not silently drop the pipeline at startup.
+		// Note f > 0 already excludes NaN (NaN > 0 is false); IsInf is
+		// needed because +Inf passes f > 0. f > 0 also guards the
+		// f * float64(time.Second) conversion from a negative overflow.
 		f, err := strconv.ParseFloat(v, 64)
-		if err != nil || f <= 0 {
-			return nil, fmt.Errorf("youtube: invalid fail_cooldown value %q", v)
+		if err == nil && f > 0 && !math.IsInf(f, 0) {
+			if f > float64(maxFailCooldown)/float64(time.Second) {
+				y.failCooldown = maxFailCooldown
+			} else {
+				y.failCooldown = time.Duration(f * float64(time.Second))
+			}
 		}
-		y.failCooldown = time.Duration(f * float64(time.Second))
 	}
 
 	// Precompute the fixed yt-dlp args once; GetStream only appends "-j" and the URL.
@@ -163,14 +183,18 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		y.mu.Unlock()
 		return &info, nil
 	}
-	retryIn := y.failCooldown - time.Since(y.lastFailAt)
-	if !y.lastFailAt.IsZero() && retryIn > 0 {
-		y.mu.Unlock()
-		// The manager waits at least RetryAfter before the next attempt,
-		// so it doesn't wake up into an active cooldown.
-		return nil, &source.RetryAfterError{
-			RetryAfter: retryIn,
-			Err:        fmt.Errorf("youtube: resolve failed recently, cooling down"),
+	if !y.lastFailAt.IsZero() {
+		retryIn := y.failCooldown - time.Since(y.lastFailAt)
+		if retryIn > 0 {
+			y.mu.Unlock()
+			// The manager waits at least RetryAfter before the next attempt,
+			// so it doesn't wake up into an active cooldown. Surface the
+			// original failure so /healthz shows the real cause (yt-dlp
+			// stderr, JSON error) for the whole cooldown window.
+			return nil, &source.RetryAfterError{
+				RetryAfter: retryIn,
+				Err:        fmt.Errorf("youtube: resolve failed recently: %w", y.lastFailErr),
+			}
 		}
 	}
 	y.mu.Unlock()
@@ -194,8 +218,13 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		}
 	}
 	if err != nil {
-		y.noteFailure()
-		return nil, ytExecError("yt-dlp", err)
+		// Return RetryAfterError with the FULL cooldown so the manager
+		// sleeps the whole window in one backoffWait instead of waking
+		// one interval later into an active cooldown (which would churn
+		// a redundant runOnce per attempt).
+		execErr := ytExecError("yt-dlp", err)
+		y.noteFailure(execErr)
+		return nil, &source.RetryAfterError{RetryAfter: y.failCooldown, Err: execErr}
 	}
 
 	var raw struct {
@@ -213,8 +242,9 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 	if err := json.Unmarshal(out, &raw); err != nil {
 		// A bot-check page can make yt-dlp exit 0 with garbage HTML; that is
 		// a failed resolve too, so it starts the cooldown as well.
-		y.noteFailure()
-		return nil, fmt.Errorf("parsing yt-dlp JSON: %w", err)
+		parseErr := fmt.Errorf("parsing yt-dlp JSON: %w", err)
+		y.noteFailure(parseErr)
+		return nil, &source.RetryAfterError{RetryAfter: y.failCooldown, Err: parseErr}
 	}
 
 	var urls []string
@@ -225,7 +255,12 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 	}
 	if len(urls) == 0 {
 		if raw.URL == "" {
-			return nil, fmt.Errorf("yt-dlp returned no stream URL for %s", url)
+			// A URL-less info dict is a failed resolve too (extractor quirk,
+			// channel/playlist JSON with no playable URL): without the
+			// cooldown the manager would re-run yt-dlp on every backoff tick.
+			noURLErr := fmt.Errorf("yt-dlp returned no stream URL for %s", url)
+			y.noteFailure(noURLErr)
+			return nil, &source.RetryAfterError{RetryAfter: y.failCooldown, Err: noURLErr}
 		}
 		urls = []string{raw.URL}
 	}
@@ -247,10 +282,12 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 }
 
 // noteFailure starts the failCooldown window so subsequent GetStream calls
-// fail fast instead of re-running yt-dlp.
-func (y *YouTube) noteFailure() {
+// fail fast instead of re-running yt-dlp. The failing error is retained so
+// cooldown-period RetryAfterErrors can surface the real cause.
+func (y *YouTube) noteFailure(err error) {
 	y.mu.Lock()
 	y.lastFailAt = time.Now()
+	y.lastFailErr = err
 	y.mu.Unlock()
 }
 

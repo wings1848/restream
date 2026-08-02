@@ -107,13 +107,15 @@ func (m *Manager) Run(ctx context.Context) error {
 			}
 
 			// A RetryAfterError is a source-requested resolve cooldown —
-			// expected pacing rather than a failure: log it at Info and
-			// wait at least RetryAfter so the loop doesn't wake into an
-			// active cooldown (see source.RetryAfterError).
+			// expected pacing rather than a failure: log it at Warn (a
+			// sustained resolve outage must stay visible to alerting, but
+			// it is not a pipeline failure) and wait at least RetryAfter
+			// so the loop doesn't wake into an active cooldown (see
+			// source.RetryAfterError).
 			var retryAfterErr *source.RetryAfterError
 			errors.As(err, &retryAfterErr)
 			if retryAfterErr != nil {
-				l.Info("resolve cooling down",
+				l.Warn("resolve cooling down",
 					"error", err,
 					"retry_after", retryAfterErr.RetryAfter.Round(time.Second),
 				)
@@ -126,7 +128,13 @@ func (m *Manager) Run(ctx context.Context) error {
 					l.Error("max retries reached, giving up")
 					return fmt.Errorf("pipeline %q: max retries reached: %w", m.name, err)
 				}
-				retriesLeft--
+				// Pacing errors are not failed attempts: the source did no
+				// work and the wait is its own cooldown floor. Only real
+				// failures drain the budget, so a paced outage can't hit
+				// "max retries reached" mid-cooldown.
+				if retryAfterErr == nil {
+					retriesLeft--
+				}
 			}
 
 			// Reset the backoff when the pipeline ran for a meaningful amount
@@ -137,6 +145,11 @@ func (m *Manager) Run(ctx context.Context) error {
 				interval = initialInterval
 			}
 
+			// A RetryAfter floor may exceed retry.max_interval: it is the
+			// source's minimum backoff (e.g. the yt-dlp fail_cooldown), so
+			// capping it here would wake the loop into an active cooldown
+			// and churn. The retry.* knobs bound the manager's own
+			// exponential interval, not the source's cooldown floor.
 			wait := interval
 			if retryAfterErr != nil && retryAfterErr.RetryAfter > wait {
 				wait = retryAfterErr.RetryAfter
