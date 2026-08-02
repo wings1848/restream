@@ -26,7 +26,7 @@ import (
 )
 
 // version is the restream release version printed by --version.
-const version = "v0.2.0"
+const version = "v0.2.5"
 
 func main() {
 	// Parse CLI flags.
