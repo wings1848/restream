@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+// writeFakeYtDlp installs a fake yt-dlp script with the given body into dir
+// and prepends dir to PATH so the yt-dlp invocations in GetStream hit it.
+func writeFakeYtDlp(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "yt-dlp"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // TestGetStreamCacheHit verifies that a second GetStream within the cache TTL
 // reuses the first resolution instead of re-running yt-dlp. A fake yt-dlp
 // script emits a distinct URL on every invocation and counts calls; the second
@@ -17,17 +27,13 @@ import (
 func TestGetStreamCacheHit(t *testing.T) {
 	dir := t.TempDir()
 	countFile := filepath.Join(dir, "count")
-	script := filepath.Join(dir, "yt-dlp")
 	scriptBody := `#!/bin/sh
 n=0
 [ -f "` + countFile + `" ] && n=$(cat "` + countFile + `")
 echo $((n+1)) > "` + countFile + `"
 echo "{\"url\":\"http://fake-hls/$n.m3u8\",\"vcodec\":\"h264\",\"acodec\":\"aac\",\"ext\":\"mp4\",\"fps\":30,\"tbr\":4000}"
 `
-	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeFakeYtDlp(t, dir, scriptBody)
 
 	src, err := New(map[string]string{})
 	if err != nil {
@@ -68,7 +74,6 @@ echo "{\"url\":\"http://fake-hls/$n.m3u8\",\"vcodec\":\"h264\",\"acodec\":\"aac\
 func TestGetStreamFailCooldown(t *testing.T) {
 	dir := t.TempDir()
 	countFile := filepath.Join(dir, "count")
-	script := filepath.Join(dir, "yt-dlp")
 	scriptBody := `#!/bin/sh
 n=0
 [ -f "` + countFile + `" ] && n=$(cat "` + countFile + `")
@@ -76,10 +81,7 @@ echo $((n+1)) > "` + countFile + `"
 echo "ERROR: [youtube] Sign in to confirm you're not a bot" >&2
 exit 1
 `
-	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeFakeYtDlp(t, dir, scriptBody)
 
 	const url = "https://www.youtube.com/watch?v=abc123"
 	src, err := New(map[string]string{"fail_cooldown": "0.05"}) // 50ms cooldown
@@ -87,39 +89,53 @@ exit 1
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	count := func() int {
+		b, _ := os.ReadFile(countFile)
+		n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		return n
+	}
 
 	// First call fails and records the failure. Each GetStream runs yt-dlp
 	// twice: the primary call plus the automatic --force-ipv4 fallback.
 	if _, err := src.GetStream(ctx, url); err == nil {
 		t.Fatal("expected resolve error on first call")
 	}
-	b, _ := os.ReadFile(countFile)
-	first, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	if first != 2 {
-		t.Fatalf("yt-dlp invoked %d times on first call, want 2 (primary + ipv4 fallback)", first)
+	if n := count(); n != 2 {
+		t.Fatalf("yt-dlp invoked %d times on first call, want 2 (primary + ipv4 fallback)", n)
 	}
 
 	// Within the cooldown, GetStream must fail WITHOUT running yt-dlp.
-	if _, err := src.GetStream(ctx, url); err == nil {
+	_, err = src.GetStream(ctx, url)
+	if err == nil {
 		t.Fatal("expected cooldown error")
-	} else if !strings.Contains(err.Error(), "cooling down") {
+	}
+	if !strings.Contains(err.Error(), "cooling down") {
 		t.Fatalf("expected cooldown error, got: %v", err)
 	}
-	b, _ = os.ReadFile(countFile)
-	second, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	if second != first {
-		t.Fatalf("yt-dlp invoked during cooldown: %d -> %d, want unchanged", first, second)
+	if n := count(); n != 2 {
+		t.Fatalf("yt-dlp invoked during cooldown: %d, want unchanged 2", n)
 	}
 
-	// After the cooldown expires, yt-dlp runs again (primary + fallback).
-	time.Sleep(60 * time.Millisecond)
-	if _, err := src.GetStream(ctx, url); err == nil {
-		t.Fatal("expected resolve error after cooldown (fake yt-dlp always fails)")
+	// Wait for the cooldown to expire: poll GetStream until it stops
+	// returning "cooling down" — a fixed sleep against the 50ms cooldown
+	// is flaky on loaded CI. The first call past the window runs yt-dlp
+	// again (primary + fallback) before failing.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := src.GetStream(ctx, url)
+		if err == nil {
+			t.Fatal("expected resolve error after cooldown (fake yt-dlp always fails)")
+		}
+		if !strings.Contains(err.Error(), "cooling down") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cooldown never expired")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	b, _ = os.ReadFile(countFile)
-	third, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	if third != second+2 {
-		t.Fatalf("yt-dlp not re-run after cooldown: %d -> %d, want +2", second, third)
+	if n := count(); n != 4 {
+		t.Fatalf("yt-dlp not re-run after cooldown: %d, want 4 (2 per call)", n)
 	}
 }
 
@@ -129,7 +145,6 @@ exit 1
 func TestGetStreamIPv4Fallback(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "argv")
-	script := filepath.Join(dir, "yt-dlp")
 	// Fake yt-dlp: fail unless invoked with --force-ipv4; log every argv.
 	scriptBody := `#!/bin/sh
 printf 'ARGV:%s\n' "$*" >> "` + logFile + `"
@@ -142,10 +157,7 @@ done
 echo "getaddrinfo: no route to host" >&2
 exit 1
 `
-	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeFakeYtDlp(t, dir, scriptBody)
 
 	src, err := New(map[string]string{})
 	if err != nil {
@@ -174,15 +186,11 @@ exit 1
 // and the --force-ipv4 retry fail, GetStream surfaces an error mentioning both.
 func TestGetStreamIPv4FallbackAlsoFails(t *testing.T) {
 	dir := t.TempDir()
-	script := filepath.Join(dir, "yt-dlp")
 	scriptBody := `#!/bin/sh
 echo "always broken" >&2
 exit 1
 `
-	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeFakeYtDlp(t, dir, scriptBody)
 
 	src, err := New(map[string]string{})
 	if err != nil {
@@ -205,15 +213,11 @@ exit 1
 func TestGetStreamCookies(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "argv")
-	script := filepath.Join(dir, "yt-dlp")
 	scriptBody := `#!/bin/sh
 printf 'ARGV:%s\n' "$*" >> "` + logFile + `"
 echo '{"url":"http://fake-hls/c.m3u8","vcodec":"h264","acodec":"aac","ext":"mp4"}'
 `
-	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeFakeYtDlp(t, dir, scriptBody)
 
 	src, err := New(map[string]string{"cookies": "/etc/restream/cookies.txt"})
 	if err != nil {
