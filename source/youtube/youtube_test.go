@@ -109,11 +109,10 @@ exit 1
 
 	// Within the cooldown, GetStream must fail WITHOUT running yt-dlp, and
 	// the error must carry the remaining cooldown so the manager can pace
-	// its retry instead of waking into an active cooldown.
+	// its retry instead of waking into an active cooldown. The underlying
+	// cause (the bot-check stderr) must be retained in Err, not a static
+	// message, so /healthz shows it for the whole cooldown window.
 	_, err = src.GetStream(ctx, url)
-	if err == nil {
-		t.Fatal("expected cooldown error")
-	}
 	var rae *source.RetryAfterError
 	if !errors.As(err, &rae) {
 		t.Fatalf("expected RetryAfterError, got: %v", err)
@@ -121,33 +120,116 @@ exit 1
 	if rae.RetryAfter <= 0 {
 		t.Fatalf("RetryAfter = %s, want > 0", rae.RetryAfter)
 	}
-	if !strings.Contains(err.Error(), "cooling down") {
-		t.Fatalf("expected cooldown error, got: %v", err)
+	if !strings.Contains(rae.Err.Error(), "Sign in to confirm") {
+		t.Fatalf("cooldown error lost the underlying cause: %v", rae.Err)
 	}
 	if n := count(); n != 2 {
 		t.Fatalf("yt-dlp invoked during cooldown: %d, want unchanged 2", n)
 	}
 
-	// Wait for the cooldown to expire: poll GetStream until it stops
-	// returning "cooling down" — a fixed sleep against the 50ms cooldown
-	// is flaky on loaded CI. The first call past the window runs yt-dlp
-	// again (primary + fallback) before failing.
+	// Wait for the cooldown to expire: poll GetStream until yt-dlp runs
+	// again (count 2 -> 4) — a fixed sleep against the 50ms cooldown is
+	// flaky on loaded CI. Within the window GetStream fails fast without
+	// touching yt-dlp; the first call past it re-runs yt-dlp (primary +
+	// fallback) before failing again.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		_, err := src.GetStream(ctx, url)
-		if err == nil {
-			t.Fatal("expected resolve error after cooldown (fake yt-dlp always fails)")
-		}
-		if !strings.Contains(err.Error(), "cooling down") {
+		_, _ = src.GetStream(ctx, url)
+		if count() >= 4 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("cooldown never expired")
+			t.Fatalf("cooldown never expired: count = %d", count())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	if n := count(); n != 4 {
 		t.Fatalf("yt-dlp not re-run after cooldown: %d, want 4 (2 per call)", n)
+	}
+}
+
+// TestNewFailCooldownValidation verifies fail_cooldown parsing: invalid values
+// (unparseable, <=0, NaN, ±Inf, time.Duration overflow) fall back to the 60s
+// default instead of failing New(), and absurdly large values are clamped to
+// maxFailCooldown.
+func TestNewFailCooldownValidation(t *testing.T) {
+	cases := []struct {
+		value string
+		want  time.Duration
+	}{
+		{"", defaultFailCooldown},       // empty -> default
+		{"300", 300 * time.Second},      // valid
+		{"0.05", 50 * time.Millisecond}, // sub-second valid
+		{"abc", defaultFailCooldown},    // unparseable -> default
+		{"0", defaultFailCooldown},      // "disable cooldown" attempt -> default
+		{"-5", defaultFailCooldown},     // negative -> default
+		{"NaN", defaultFailCooldown},    // NaN: f > 0 is false -> default
+		{"+Inf", defaultFailCooldown},   // +Inf passes f > 0, must be rejected
+		{"1e15", maxFailCooldown},       // overflows time.Duration -> clamped
+		{"100000", maxFailCooldown},     // > 24h -> clamped
+	}
+	for _, tc := range cases {
+		src, err := New(map[string]string{"fail_cooldown": tc.value})
+		if err != nil {
+			t.Errorf("New(fail_cooldown=%q): unexpected error: %v", tc.value, err)
+			continue
+		}
+		y := src.(*YouTube)
+		if y.failCooldown != tc.want {
+			t.Errorf("fail_cooldown=%q: got %s, want %s", tc.value, y.failCooldown, tc.want)
+		}
+	}
+}
+
+// TestGetStreamNoURLStartsCooldown verifies that a URL-less info dict (yt-dlp
+// exit 0 with valid JSON but no playable URL) starts the cooldown like any
+// other resolve failure — without it the manager would re-run yt-dlp on every
+// backoff tick, the exact hammering fail_cooldown exists to prevent.
+func TestGetStreamNoURLStartsCooldown(t *testing.T) {
+	dir := t.TempDir()
+	countFile := filepath.Join(dir, "count")
+	scriptBody := `#!/bin/sh
+n=0
+[ -f "` + countFile + `" ] && n=$(cat "` + countFile + `")
+echo $((n+1)) > "` + countFile + `"
+echo '{"vcodec":"h264","acodec":"aac","ext":"mp4"}'
+`
+	writeFakeYtDlp(t, dir, scriptBody)
+
+	src, err := New(map[string]string{"fail_cooldown": "0.05"}) // 50ms cooldown
+	if err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://www.youtube.com/watch?v=abc123"
+	ctx := context.Background()
+	count := func() int {
+		b, _ := os.ReadFile(countFile)
+		n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		return n
+	}
+
+	// First call: no-URL output is a failed resolve. It returns a
+	// RetryAfterError carrying the full cooldown; exit 0 means no ipv4
+	// fallback, so exactly one yt-dlp run.
+	_, err = src.GetStream(ctx, url)
+	var rae *source.RetryAfterError
+	if !errors.As(err, &rae) {
+		t.Fatalf("first call: expected RetryAfterError, got: %v", err)
+	}
+	if !strings.Contains(rae.Err.Error(), "no stream URL") {
+		t.Fatalf("first call: error cause = %v, want 'no stream URL'", rae.Err)
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("yt-dlp invoked %d times, want 1 (exit 0 has no ipv4 fallback)", n)
+	}
+
+	// Within the cooldown, GetStream must fail WITHOUT running yt-dlp.
+	_, err = src.GetStream(ctx, url)
+	if !errors.As(err, &rae) {
+		t.Fatalf("second call: expected RetryAfterError, got: %v", err)
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("yt-dlp re-run during cooldown: %d, want unchanged 1", n)
 	}
 }
 
