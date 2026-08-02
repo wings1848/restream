@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestGetStreamCacheHit verifies that a second GetStream within the cache TTL
@@ -57,6 +58,68 @@ echo "{\"url\":\"http://fake-hls/$n.m3u8\",\"vcodec\":\"h264\",\"acodec\":\"aac\
 	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	if n != 1 {
 		t.Fatalf("yt-dlp invoked %d times, want 1 (cache should absorb the second call)", n)
+	}
+}
+
+// TestGetStreamFailCooldown verifies that a failed resolve starts a cooldown
+// during which GetStream fails fast WITHOUT re-running yt-dlp. Without this,
+// the manager's retry loop hammers the extractor every few seconds and gets
+// the exit IP temp-banned by YouTube.
+func TestGetStreamFailCooldown(t *testing.T) {
+	dir := t.TempDir()
+	countFile := filepath.Join(dir, "count")
+	script := filepath.Join(dir, "yt-dlp")
+	scriptBody := `#!/bin/sh
+n=0
+[ -f "` + countFile + `" ] && n=$(cat "` + countFile + `")
+echo $((n+1)) > "` + countFile + `"
+echo "ERROR: [youtube] Sign in to confirm you're not a bot" >&2
+exit 1
+`
+	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	const url = "https://www.youtube.com/watch?v=abc123"
+	src, err := New(map[string]string{"fail_cooldown": "0.05"}) // 50ms cooldown
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// First call fails and records the failure. Each GetStream runs yt-dlp
+	// twice: the primary call plus the automatic --force-ipv4 fallback.
+	if _, err := src.GetStream(ctx, url); err == nil {
+		t.Fatal("expected resolve error on first call")
+	}
+	b, _ := os.ReadFile(countFile)
+	first, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if first != 2 {
+		t.Fatalf("yt-dlp invoked %d times on first call, want 2 (primary + ipv4 fallback)", first)
+	}
+
+	// Within the cooldown, GetStream must fail WITHOUT running yt-dlp.
+	if _, err := src.GetStream(ctx, url); err == nil {
+		t.Fatal("expected cooldown error")
+	} else if !strings.Contains(err.Error(), "cooling down") {
+		t.Fatalf("expected cooldown error, got: %v", err)
+	}
+	b, _ = os.ReadFile(countFile)
+	second, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if second != first {
+		t.Fatalf("yt-dlp invoked during cooldown: %d -> %d, want unchanged", first, second)
+	}
+
+	// After the cooldown expires, yt-dlp runs again (primary + fallback).
+	time.Sleep(60 * time.Millisecond)
+	if _, err := src.GetStream(ctx, url); err == nil {
+		t.Fatal("expected resolve error after cooldown (fake yt-dlp always fails)")
+	}
+	b, _ = os.ReadFile(countFile)
+	third, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if third != second+2 {
+		t.Fatalf("yt-dlp not re-run after cooldown: %d -> %d, want +2", second, third)
 	}
 }
 

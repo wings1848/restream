@@ -50,6 +50,10 @@ pipelines:
         # confirm you're not a bot" check or members-only content. This file
         # holds login credentials — never commit it to the repo.
         cookies: ""
+        # Seconds to wait after a failed resolve before running yt-dlp again
+        # (default 60). Prevents the retry loop from hammering the extractor
+        # every few seconds, which gets the exit IP temp-banned by YouTube.
+        # fail_cooldown: "60"
         # --- Alternative: "direct" source (pre-resolved URL, no yt-dlp) ---
         # Feed a signed stream URL straight to FFmpeg, skipping resolution.
         # Use when the machine running restream CANNOT resolve but CAN fetch:

@@ -53,11 +53,21 @@ type YouTube struct {
 	// baseArgs holds the fixed yt-dlp arguments, precomputed once in New.
 	baseArgs []string
 
-	// mu guards cached/cachedAt.
+	// failCooldown bounds how often yt-dlp resolution is retried after a
+	// failure. Without it, a failing resolve loop re-runs the full yt-dlp
+	// extraction on every backoff interval (5-40s), and that request rate
+	// gets the exit IP temp-banned by YouTube ("Sign in to confirm you're
+	// not a bot") for hours.
+	failCooldown time.Duration
+
+	// mu guards cached/cachedAt/lastFailAt.
 	mu sync.Mutex
 	// cached is the last successful resolution, reused for rapid reconnects.
 	cached   *source.StreamInfo
 	cachedAt time.Time
+	// lastFailAt is the last failed resolution; non-zero means a cooldown
+	// is active until lastFailAt+failCooldown.
+	lastFailAt time.Time
 }
 
 // New is the Factory registered under the name "youtube".
@@ -87,6 +97,15 @@ func New(config map[string]string) (source.Source, error) {
 	}
 	if v, ok := config["cookies"]; ok && v != "" {
 		y.cookies = v
+	}
+	// Seconds to wait after a failed resolve before running yt-dlp again
+	// (default 60). Keep the rate low enough that YouTube doesn't temp-ban
+	// the exit IP for rapid repeated extractions.
+	y.failCooldown = 60 * time.Second
+	if v, ok := config["fail_cooldown"]; ok && v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			y.failCooldown = time.Duration(f * float64(time.Second))
+		}
 	}
 
 	// Precompute the fixed yt-dlp args once; GetStream only appends "-j" and the URL.
@@ -139,6 +158,18 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 	}
 	y.mu.Unlock()
 
+	// Failure cooldown: after a failed resolve, back off instead of
+	// re-running yt-dlp immediately — the manager's own retry loop would
+	// otherwise hammer the extractor every few seconds and get the exit
+	// IP temp-banned by YouTube.
+	y.mu.Lock()
+	if !y.lastFailAt.IsZero() && time.Since(y.lastFailAt) < y.failCooldown {
+		retryIn := y.failCooldown - time.Since(y.lastFailAt)
+		y.mu.Unlock()
+		return nil, fmt.Errorf("youtube: resolve failed recently, cooling down for %s", retryIn.Round(time.Second))
+	}
+	y.mu.Unlock()
+
 	args := make([]string, 0, len(y.baseArgs)+2)
 	args = append(args, y.baseArgs...)
 	args = append(args, "-j", url)
@@ -158,6 +189,12 @@ func (y *YouTube) GetStream(ctx context.Context, url string) (*source.StreamInfo
 		}
 	}
 	if err != nil {
+		// Remember the failure so the cooldown check above skips yt-dlp
+		// for a while; the manager's backoff loop then makes slow, gentle
+		// retries instead of a request burst.
+		y.mu.Lock()
+		y.lastFailAt = time.Now()
+		y.mu.Unlock()
 		return nil, ytExecError("yt-dlp", err)
 	}
 
