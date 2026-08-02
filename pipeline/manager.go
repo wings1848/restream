@@ -172,9 +172,18 @@ func (m *Manager) Run(ctx context.Context) error {
 			}
 			interval = newInterval
 		} else {
-			// FFmpeg exited cleanly (unlikely for a live stream).
-			l.Info("ffmpeg exited cleanly")
-			return nil
+			// A clean ffmpeg exit on a live relay almost always means the
+			// source stream ended (HLS playlist stopped advancing, upstream
+			// hiccup) — not a reason to shut the relay down. Reset the
+			// backoff and loop back to reconnect; when the stream returns,
+			// the next resolve succeeds and ffmpeg restarts automatically.
+			// A shutdown still works: backoffWait returns ctx.Err() and Run
+			// propagates it (main's normal stop path).
+			l.Info("ffmpeg exited cleanly, reconnecting")
+			interval = initialInterval
+			if err := backoffWait(ctx, interval); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -314,7 +323,7 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 				return fmt.Errorf("ffmpeg exited: %w", err)
 			}
 			l.Info("ffmpeg exited cleanly")
-			m.setHealthState(health.StateStopped, "", nil)
+			m.setHealthState(health.StateBackoff, "source stream ended", nil)
 			return nil
 		case <-time.After(300 * time.Millisecond):
 		}
@@ -330,7 +339,7 @@ func (m *Manager) runOnce(ctx context.Context, l *slog.Logger) error {
 			return fmt.Errorf("ffmpeg exited: %w", err)
 		}
 		l.Info("ffmpeg exited cleanly")
-		m.setHealthState(health.StateStopped, "", nil)
+		m.setHealthState(health.StateBackoff, "source stream ended", nil)
 		return nil
 	}
 }
